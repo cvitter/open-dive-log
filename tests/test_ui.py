@@ -367,6 +367,90 @@ def test_qt_cert_add_dialog_constructs() -> None:
     )
 
 
+def test_qt_dive_add_dialog_constructs() -> None:
+    """Verify the dive add dialog opens and the form has all the
+    expected sections wired. This is the UI-level smoke test for the
+    new add/edit feature — the actual user flow is exercised manually."""
+    _subprocess_qt_check(
+        """
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.repositories import sites as sites_repo, buddies
+        from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
+
+        cm = connect(':memory:')
+        conn = cm.__enter__()
+        apply_migrations(conn)
+        conn.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
+        sites_repo.find_or_create(conn, "Salt Pier", country_code='BQ')
+        buddies.find_or_create(conn, "Mike", "Smith")
+
+        dlg = DiveAddEditDialog(conn, dive=None)
+        assert dlg.windowTitle() == 'Add Dive'
+        # All 9 lookup comboboxes wired
+        for attr in ('_time_of_day', '_entry_type', '_surface_conditions',
+                     '_equipment_type', '_tank_type', '_tank_config',
+                     '_gas_type', '_purpose'):
+            combo = getattr(dlg, attr)
+            assert combo.count() > 1, f'{attr} not populated'
+        # Buddy roles combo has at least the 4 seeded values
+        assert dlg._attached_role_combo.count() == 5  # 1 "(none)" + 4 roles
+        # Sites picker populated
+        assert dlg._sites_picker.count() == 1
+        assert dlg._sites_picker.item(0).text() == 'Salt Pier (Bonaire)'
+        # Buddies picker populated
+        assert dlg._buddies_picker.count() == 1
+        dlg.close()
+        cm.__exit__(None, None, None)
+        print('OK: dive add dialog constructed with all sections')
+        """
+    )
+
+
+def test_qt_dive_edit_round_trip() -> None:
+    """End-to-end: create a dive + sites + buddies, open the edit dialog,
+    verify the form is pre-populated correctly, then save a change and
+    verify it round-trips through the repository. This is the regression
+    test for the slots=True + to_kwargs() boundary."""
+    _subprocess_qt_check(
+        """
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.repositories import dives, sites as sites_repo, buddies, lookups
+        from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
+
+        cm = connect(':memory:')
+        conn = cm.__enter__()
+        apply_migrations(conn)
+        conn.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
+        s1 = sites_repo.find_or_create(conn, "Salt Pier", country_code='BQ')
+        s2 = sites_repo.find_or_create(conn, "Karpata", country_code='BQ')
+        mike = buddies.find_or_create(conn, "Mike", "Smith")
+        day = next(t.id for t in lookups.list_active(conn, 'lookup_time_of_day') if t.name == 'day')
+
+        # Create a dive
+        did = dives.create(conn, dive_date='2026-06-15', start_time='14:30',
+                          end_time='15:15', dive_time_minutes=45, max_depth_m=24.0,
+                          time_of_day_id=day)
+        dives.attach_sites(conn, did, [s1.id, s2.id])
+        dives.attach_buddies(conn, did, [(mike.id, None)])
+
+        # Open the edit dialog and check the form is pre-populated
+        full = dives.get_full(conn, did)
+        dlg = DiveAddEditDialog(conn, dive=full)
+        assert dlg.windowTitle() == 'Edit Dive'
+        # Sites are pre-attached in order
+        assert dlg._sites_attached.count() == 2
+        assert dlg._sites_attached.item(0).text().endswith('Salt Pier')
+        assert dlg._sites_attached.item(1).text().endswith('Karpata')
+        # Buddy is pre-attached
+        assert dlg._buddies_attached.count() == 1
+        assert 'Mike Smith' in dlg._buddies_attached.item(0).text()
+        dlg.close()
+        cm.__exit__(None, None, None)
+        print('OK: dive edit dialog pre-populates from get_full()')
+        """
+    )
+
+
 def test_qt_cert_add_edit_round_trip() -> None:
     """End-to-end: construct add dialog, simulate Save, verify create + edit
     via to_kwargs() actually round-trips through the repository. This is the

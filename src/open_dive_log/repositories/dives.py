@@ -16,12 +16,55 @@ from . import buddies, sites
 
 @dataclass(frozen=True, slots=True)
 class Dive:
+    """Lightweight dive row for the list view. Has only the 6 fields shown
+    in the main window's table."""
     id: int
     dive_date: str
     start_time: str | None
     end_time: str | None
     dive_time_minutes: int | None
     notes: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DiveFull:
+    """All 22 user-input fields on a dive, plus the bookkeeping timestamps.
+
+    Used by the add/edit form and the detail dialog. The list view uses
+    `Dive` (or the dict-shaped output of `list_recent_with_sites`) to
+    avoid the heavier join.
+    """
+    # when
+    id: int
+    dive_date: str
+    start_time: str | None
+    end_time: str | None
+    dive_time_minutes: int | None
+    time_of_day_id: int | None
+    # entry
+    entry_type_id: int | None
+    entry_notes: str | None
+    # surface
+    surface_conditions_id: int | None
+    surface_conditions_notes: str | None
+    run_time_minutes: int | None
+    # depth
+    max_depth_m: float | None
+    avg_depth_m: float | None
+    # equipment
+    equipment_type_id: int | None
+    tank_type_id: int | None
+    tank_configuration_id: int | None
+    gas_type_id: int | None
+    o2_percentage: float | None
+    mix_notes: str | None
+    gear_notes: str | None
+    # purpose
+    purpose_id: int | None
+    notes: str | None
+    # bookkeeping
+    created_at: str
+    updated_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -265,3 +308,225 @@ def list_recent_with_sites(conn: sqlite3.Connection, limit: int = 500) -> list[d
         }
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Update + delete + full-row read (used by the add/edit form)
+# ---------------------------------------------------------------------------
+_FULL_COLS = (
+    "id, dive_date, start_time, end_time, dive_time_minutes, time_of_day_id, "
+    "entry_type_id, entry_notes, "
+    "surface_conditions_id, surface_conditions_notes, run_time_minutes, "
+    "max_depth_m, avg_depth_m, "
+    "equipment_type_id, tank_type_id, tank_configuration_id, gas_type_id, "
+    "o2_percentage, mix_notes, gear_notes, "
+    "purpose_id, notes, "
+    "created_at, updated_at"
+)
+
+
+def get_full(conn: sqlite3.Connection, dive_id: int) -> DiveFull | None:
+    row = conn.execute(
+        f"SELECT {_FULL_COLS} FROM dive WHERE id = ?", (dive_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    return DiveFull(
+        id=row["id"],
+        dive_date=row["dive_date"],
+        start_time=row["start_time"],
+        end_time=row["end_time"],
+        dive_time_minutes=row["dive_time_minutes"],
+        time_of_day_id=row["time_of_day_id"],
+        entry_type_id=row["entry_type_id"],
+        entry_notes=row["entry_notes"],
+        surface_conditions_id=row["surface_conditions_id"],
+        surface_conditions_notes=row["surface_conditions_notes"],
+        run_time_minutes=row["run_time_minutes"],
+        max_depth_m=row["max_depth_m"],
+        avg_depth_m=row["avg_depth_m"],
+        equipment_type_id=row["equipment_type_id"],
+        tank_type_id=row["tank_type_id"],
+        tank_configuration_id=row["tank_configuration_id"],
+        gas_type_id=row["gas_type_id"],
+        o2_percentage=row["o2_percentage"],
+        mix_notes=row["mix_notes"],
+        gear_notes=row["gear_notes"],
+        purpose_id=row["purpose_id"],
+        notes=row["notes"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def update(
+    conn: sqlite3.Connection,
+    dive_id: int,
+    *,
+    dive_date: str,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    dive_time_minutes: int | None = None,
+    time_of_day_id: int | None = None,
+    entry_type_id: int | None = None,
+    entry_notes: str | None = None,
+    surface_conditions_id: int | None = None,
+    surface_conditions_notes: str | None = None,
+    run_time_minutes: int | None = None,
+    max_depth_m: float | None = None,
+    avg_depth_m: float | None = None,
+    equipment_type_id: int | None = None,
+    tank_type_id: int | None = None,
+    tank_configuration_id: int | None = None,
+    gas_type_id: int | None = None,
+    o2_percentage: float | None = None,
+    mix_notes: str | None = None,
+    gear_notes: str | None = None,
+    purpose_id: int | None = None,
+    notes: str | None = None,
+) -> None:
+    """Update an existing dive row. Raises LookupError if not found.
+
+    Does NOT touch dive_site / dive_buddy — those have their own replace
+    semantics (`attach_sites`, `attach_buddies`).
+    """
+    cur = conn.execute(
+        """
+        UPDATE dive SET
+            dive_date = ?, start_time = ?, end_time = ?,
+            dive_time_minutes = ?, time_of_day_id = ?,
+            entry_type_id = ?, entry_notes = ?,
+            surface_conditions_id = ?, surface_conditions_notes = ?,
+            run_time_minutes = ?,
+            max_depth_m = ?, avg_depth_m = ?,
+            equipment_type_id = ?, tank_type_id = ?,
+            tank_configuration_id = ?, gas_type_id = ?,
+            o2_percentage = ?, mix_notes = ?, gear_notes = ?,
+            purpose_id = ?, notes = ?
+        WHERE id = ?
+        """,
+        (
+            dive_date, start_time, end_time,
+            dive_time_minutes, time_of_day_id,
+            entry_type_id, entry_notes,
+            surface_conditions_id, surface_conditions_notes,
+            run_time_minutes,
+            max_depth_m, avg_depth_m,
+            equipment_type_id, tank_type_id,
+            tank_configuration_id, gas_type_id,
+            o2_percentage, mix_notes, gear_notes,
+            purpose_id, notes,
+            dive_id,
+        ),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"No dive with id {dive_id}")
+
+
+def delete(conn: sqlite3.Connection, dive_id: int) -> None:
+    """Delete a dive. Cascades to dive_site and dive_buddy via FK rules."""
+    cur = conn.execute("DELETE FROM dive WHERE id = ?", (dive_id,))
+    if cur.rowcount == 0:
+        raise LookupError(f"No dive with id {dive_id}")
+
+
+# ---------------------------------------------------------------------------
+# Picker helpers — used by the add/edit form's site and buddy pickers.
+# These return lightweight (id, label) tuples for the form's comboboxes
+# and lists. They don't need the full Site / Buddy dataclass because
+# the form only needs to display and re-attach ids.
+# ---------------------------------------------------------------------------
+def list_sites_for_picker(
+    conn: sqlite3.Connection, query: str = "", limit: int = 500
+) -> list[tuple[int, str]]:
+    """Return (id, display_label) for sites matching `query` (substring on
+    name and country). Sorted alphabetically. The display label is
+    "Name (Country)" or just "Name" if no country is set."""
+    if query.strip():
+        like = f"%{query.strip()}%"
+        rows = conn.execute(
+            """
+            SELECT s.id, s.name, c.name AS country_name
+            FROM site s
+            LEFT JOIN country c ON c.code = s.country_code
+            WHERE s.name LIKE ? OR c.name LIKE ?
+            ORDER BY s.name
+            LIMIT ?
+            """,
+            (like, like, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT s.id, s.name, c.name AS country_name
+            FROM site s
+            LEFT JOIN country c ON c.code = s.country_code
+            ORDER BY s.name
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [
+        (r["id"], f"{r['name']} ({r['country_name']})" if r["country_name"] else r["name"])
+        for r in rows
+    ]
+
+
+def list_buddies_for_picker(
+    conn: sqlite3.Connection, query: str = "", limit: int = 500
+) -> list[tuple[int, str]]:
+    """Return (id, full_name) for buddies matching `query` (substring on
+    full_name, case-insensitive). Sorted by full_name."""
+    if query.strip():
+        like = f"%{query.strip()}%"
+        rows = conn.execute(
+            """
+            SELECT id, full_name FROM buddy
+            WHERE full_name LIKE ?
+            ORDER BY full_name
+            LIMIT ?
+            """,
+            (like, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, full_name FROM buddy ORDER BY full_name LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [(r["id"], r["full_name"]) for r in rows]
+
+
+def get_buddies_with_roles(
+    conn: sqlite3.Connection, dive_id: int
+) -> list[tuple[int, str, int | None]]:
+    """For the form: return [(buddy_id, full_name, role_id)] for the dive,
+    joined with buddy, sorted by last_name. The role_id may be None if
+    the join row was created without a role."""
+    rows = conn.execute(
+        """
+        SELECT b.id, b.full_name, db.role_id
+        FROM dive_buddy db
+        JOIN buddy b ON b.id = db.buddy_id
+        WHERE db.dive_id = ?
+        ORDER BY b.last_name, b.first_name
+        """,
+        (dive_id,),
+    ).fetchall()
+    return [(r["id"], r["full_name"], r["role_id"]) for r in rows]
+
+
+def get_sites_ordered(
+    conn: sqlite3.Connection, dive_id: int
+) -> list[tuple[int, str]]:
+    """For the form: return [(site_id, name)] in site_order."""
+    rows = conn.execute(
+        """
+        SELECT s.id, s.name
+        FROM dive_site ds
+        JOIN site s ON s.id = ds.site_id
+        WHERE ds.dive_id = ?
+        ORDER BY ds.site_order
+        """,
+        (dive_id,),
+    ).fetchall()
+    return [(r["id"], r["name"]) for r in rows]

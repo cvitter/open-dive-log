@@ -32,12 +32,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QStatusBar,
     QTableView,
+    QToolBar,
 )
 
+from open_dive_log.repositories import dives
 from open_dive_log import __version__, import_opendivemap
 from open_dive_log.db import get_default_db_path, get_sqlite_version
 from open_dive_log.ui.cert_add_edit_dialog import CertAddEditDialog  # noqa: F401
 from open_dive_log.ui.cert_list_window import CertListWindow
+from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
 from open_dive_log.ui.dive_detail_dialog import DiveDetailDialog
 from open_dive_log.ui.dive_table_model import DiveTableModel, load_rows
 from open_dive_log.ui.sites_list_window import SitesListWindow
@@ -118,6 +121,14 @@ class MainWindow(QMainWindow):
         # --- Menu bar -----------------------------------------------------
         self._build_menus()
 
+        # --- Toolbar (Add/Edit/Delete dive — same actions as the menu) --
+        toolbar = QToolBar("Dives toolbar", self)
+        toolbar.setObjectName("DivesToolbar")
+        self.addToolBar(toolbar)
+        toolbar.addAction(self._action_new_dive)
+        toolbar.addAction(self._action_edit_dive)
+        toolbar.addAction(self._action_delete_dive)
+
         # --- Child windows we keep references to (so they don't get GC'd) -
         self._sites_window: SitesListWindow | None = None
         self._certs_window: CertListWindow | None = None
@@ -136,17 +147,17 @@ class MainWindow(QMainWindow):
 
         self._action_new_dive = QAction("&New Dive…", self)
         self._action_new_dive.setShortcut(QKeySequence.StandardKey.New)
-        self._action_new_dive.setEnabled(False)  # future phase
+        self._action_new_dive.triggered.connect(self._on_new_dive)
         dives_menu.addAction(self._action_new_dive)
 
         self._action_edit_dive = QAction("&Edit Dive…", self)
         self._action_edit_dive.setShortcut(QKeySequence("Ctrl+E"))
-        self._action_edit_dive.setEnabled(False)  # future phase
+        self._action_edit_dive.triggered.connect(self._on_edit_dive)
         dives_menu.addAction(self._action_edit_dive)
 
         self._action_delete_dive = QAction("&Delete Dive", self)
         self._action_delete_dive.setShortcut(QKeySequence.StandardKey.Delete)
-        self._action_delete_dive.setEnabled(False)  # future phase
+        self._action_delete_dive.triggered.connect(self._on_delete_dive)
         dives_menu.addAction(self._action_delete_dive)
 
         dives_menu.addSeparator()
@@ -224,8 +235,82 @@ class MainWindow(QMainWindow):
         row = self._model.row_at(index.row())
         if row is None:
             return
-        dlg = DiveDetailDialog(self._conn, row.id, parent=self)
-        dlg.exec()
+        # Double-click edits the dive (same as the menu's Edit Dive).
+        self._edit_dive_by_id(row.id)
+
+    def _on_new_dive(self) -> None:
+        dlg = DiveAddEditDialog(self._conn, dive=None, parent=self)
+        if dlg.exec() != DiveAddEditDialog.DialogCode.Accepted:
+            return
+        submitted = dlg.result_dive()
+        if submitted is None:
+            return
+        with self._conn:
+            new_id = dives.create(self._conn, **submitted.to_kwargs())
+            if submitted.site_ids:
+                dives.attach_sites(self._conn, new_id, submitted.site_ids)
+            if submitted.buddy_entries:
+                dives.attach_buddies(self._conn, new_id, submitted.buddy_entries)
+        self._refresh_dive_list()
+        # Select the new row
+        for r in range(self._model.rowCount()):
+            if self._model.row_at(r) and self._model.row_at(r).id == new_id:
+                self._table.selectRow(r)
+                break
+        self.statusBar().showMessage(f"Added dive #{new_id}", 5000)
+
+    def _on_edit_dive(self) -> None:
+        idx = self._table.currentIndex()
+        if not idx.isValid():
+            QMessageBox.information(self, "Edit", "Select a dive first.")
+            return
+        row = self._model.row_at(idx.row())
+        if row is None:
+            return
+        self._edit_dive_by_id(row.id)
+
+    def _edit_dive_by_id(self, dive_id: int) -> None:
+        full = dives.get_full(self._conn, dive_id)
+        if full is None:
+            QMessageBox.warning(self, "Edit", f"Dive #{dive_id} no longer exists.")
+            return
+        dlg = DiveAddEditDialog(self._conn, dive=full, parent=self)
+        if dlg.exec() != DiveAddEditDialog.DialogCode.Accepted:
+            return
+        submitted = dlg.result_dive()
+        if submitted is None:
+            return
+        with self._conn:
+            dives.update(self._conn, dive_id, **submitted.to_kwargs())
+            dives.attach_sites(self._conn, dive_id, submitted.site_ids)
+            dives.attach_buddies(self._conn, dive_id, submitted.buddy_entries)
+        self._refresh_dive_list()
+        self.statusBar().showMessage(f"Updated dive #{dive_id}", 5000)
+
+    def _on_delete_dive(self) -> None:
+        idx = self._table.currentIndex()
+        if not idx.isValid():
+            QMessageBox.information(self, "Delete", "Select a dive first.")
+            return
+        row = self._model.row_at(idx.row())
+        if row is None:
+            return
+        full = dives.get_full(self._conn, row.id)
+        if full is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete dive",
+            f"Delete the dive from {full.dive_date}? "
+            "Attached sites and buddies will be removed via cascade. "
+            "This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        dives.delete(self._conn, row.id)
+        self._refresh_dive_list()
+        self.statusBar().showMessage(f"Deleted dive #{row.id}", 5000)
 
     def _open_sites_window(self) -> None:
         if self._sites_window is None:
