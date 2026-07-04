@@ -1,13 +1,20 @@
 """SQLite access layer.
 
 The application database lives at <project>/data/open_dive_log.db.
-This module is the only place that should open a sqlite3 connection — UI and
-business-logic layers call helpers here so we can centralize PRAGMAs,
-connection settings, and the WAL journal mode in one spot.
+This module owns:
+  * the default DB path
+  * PRAGMAs (WAL, foreign keys) via `connect()`
+  * the migration runner (`apply_migrations()`)
+  * the schema version banner (`get_schema_version()`)
+
+UI and business-logic code should not open connections directly — go through
+the `connect()` context manager so PRAGMAs stay consistent.
 """
 
 from __future__ import annotations
 
+import importlib.resources
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -17,6 +24,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_DB_PATH = DATA_DIR / "open_dive_log.db"
+MIGRATIONS_PACKAGE = "open_dive_log.migrations"
 
 REQUIRED_SQLITE_VERSION = (3, 53, 0)
 
@@ -44,8 +52,8 @@ def get_default_db_path() -> Path:
 def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
     """Yield a sqlite3 connection with sensible defaults.
 
-    Enables WAL journal mode and foreign keys. Caller is responsible for
-    transactions (use `with conn:` blocks).
+    Enables WAL journal mode and foreign keys. Caller manages transactions
+    (use `with conn:` blocks).
     """
     if db_path is None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -63,3 +71,80 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Migrations
+# ---------------------------------------------------------------------------
+_MIGRATION_FILE_RE = re.compile(r"^(\d+)_.*\.sql$")
+
+
+def _list_migration_files() -> list[tuple[int, str]]:
+    """Return [(version, sql_text), ...] sorted ascending by version.
+
+    Files are read from the `open_dive_log.migrations` package — bundling them
+    with the wheel means a `pip install` carries the schema with it.
+    """
+    files = importlib.resources.files(MIGRATIONS_PACKAGE)
+    out: list[tuple[int, str]] = []
+    for entry in files.iterdir():
+        name = entry.name
+        m = _MIGRATION_FILE_RE.match(name)
+        if not m:
+            continue
+        version = int(m.group(1))
+        out.append((version, entry.read_text(encoding="utf-8")))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def get_schema_version(conn: sqlite3.Connection) -> int:
+    """Return the current schema version, or 0 if no migrations applied."""
+    row = conn.execute("SELECT version FROM schema_meta WHERE id = 0").fetchone()
+    return int(row["version"]) if row else 0
+
+
+def apply_migrations(conn: sqlite3.Connection) -> int:
+    """Apply all pending migrations. Returns the new schema version.
+
+    Each migration runs inside a transaction. If a migration fails the
+    transaction is rolled back and the exception propagates — the caller
+    decides whether to back out the whole DB.
+    """
+    # Ensure the meta table exists before reading the version. This is the
+    # only DDL we run outside a migration file, and it's safe to repeat.
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            id          INTEGER PRIMARY KEY CHECK (id = 0),
+            version     INTEGER NOT NULL,
+            applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+
+    current = get_schema_version(conn)
+    target = 0
+    for version, sql in _list_migration_files():
+        if version > current:
+            conn.executescript(sql)
+            # Refresh the meta row.
+            conn.execute("DELETE FROM schema_meta WHERE id = 0")
+            conn.execute(
+                "INSERT INTO schema_meta (id, version) VALUES (0, ?)",
+                (version,),
+            )
+            target = version
+
+    return target or current
+
+
+def init_db(db_path: Path | None = None) -> int:
+    """Connect, apply migrations, return the resulting schema version.
+
+    Convenience for the app entry point: open the DB, make sure schema is
+    current, close. Safe to call on every launch.
+    """
+    with connect(db_path) as conn:
+        version = apply_migrations(conn)
+    return version
