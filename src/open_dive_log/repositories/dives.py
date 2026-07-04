@@ -111,7 +111,9 @@ def attach_sites(
 def get_sites(conn: sqlite3.Connection, dive_id: int) -> list[Site]:
     rows = conn.execute(
         """
-        SELECT s.id, s.name, s.region, s.country, s.latitude, s.longitude, s.notes
+        SELECT s.id, s.name, s.region, s.country, s.country_code,
+               s.latitude, s.longitude, s.sea_mrgid, s.max_depth_m,
+               s.environment_id, s.entry_id, s.notes
         FROM dive_site ds
         JOIN site s ON s.id = ds.site_id
         WHERE ds.dive_id = ?
@@ -120,8 +122,15 @@ def get_sites(conn: sqlite3.Connection, dive_id: int) -> list[Site]:
         (dive_id,),
     ).fetchall()
     return [
-        sites.Site(r["id"], r["name"], r["region"], r["country"],
-                   r["latitude"], r["longitude"], r["notes"])
+        sites.Site(
+            r["id"], r["name"], r["region"], r["country"],
+            r["country_code"], None,        # country_name (no JOIN in this query)
+            r["latitude"], r["longitude"],
+            r["sea_mrgid"], None,           # sea_name
+            r["environment_id"], None,      # environment_name
+            r["entry_id"], None,            # entry_name
+            r["max_depth_m"], r["notes"],
+        )
         for r in rows
     ]
 

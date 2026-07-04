@@ -33,18 +33,18 @@ def test_default_db_path_under_data_dir() -> None:
 
 def test_init_db_creates_db_with_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end: init_db() on a fresh path produces a usable, migrated DB."""
-    # Redirect the default DB path to tmp_path so the test doesn't touch
-    # the real data/ directory. Easiest: pass the path explicitly.
     target = tmp_path / "fresh.db"
     assert not target.exists()
     version = db.init_db(target)
-    assert version == 1
+    assert version >= 1
     assert target.exists()
     with db.connect(target) as c:
         tables = {r["name"] for r in c.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()}
-        assert {"dive", "site", "buddy", "dive_site", "dive_buddy", "schema_meta"}.issubset(tables)
-        # Re-running init on the same file is a no-op.
+        assert {"dive", "site", "buddy", "dive_site", "dive_buddy", "schema_meta",
+                "country", "site_source", "site_external_id",
+                "lookup_site_environment", "lookup_site_topology", "site_site_topology"
+               }.issubset(tables)
     v2 = db.init_db(target)
-    assert v2 == 1
+    assert v2 == version

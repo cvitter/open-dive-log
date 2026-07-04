@@ -26,10 +26,10 @@ def conn(tmp_path: Path) -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 def test_apply_migrations_is_idempotent(conn: sqlite3.Connection) -> None:
     version = db.apply_migrations(conn)
-    assert version == 1
-    # Re-apply — should stay at 1.
+    assert version >= 1
+    # Re-apply — should be a no-op (same version).
     version2 = db.apply_migrations(conn)
-    assert version2 == 1
+    assert version2 == version
 
 
 def test_all_expected_tables_exist(conn: sqlite3.Connection) -> None:
@@ -42,8 +42,90 @@ def test_all_expected_tables_exist(conn: sqlite3.Connection) -> None:
         "lookup_time_of_day", "lookup_entry_type", "lookup_surface_conditions",
         "lookup_equipment_type", "lookup_tank_type", "lookup_tank_configuration",
         "lookup_gas_type", "lookup_purpose", "lookup_buddy_role",
+        # migration 002
+        "country", "site_source", "site_external_id",
+        "lookup_site_environment", "lookup_site_topology", "site_site_topology",
     }
     assert expected.issubset(names), f"missing: {expected - names}"
+
+
+def test_opendivemap_seed_values(conn: sqlite3.Connection) -> None:
+    # country seed
+    codes = {r["code"] for r in conn.execute("SELECT code FROM country").fetchall()}
+    assert {"MX", "BZ", "ID", "US"}.issubset(codes)
+
+    # site_source seed
+    src = conn.execute(
+        "SELECT system_name, license FROM site_source WHERE system_name='opendivemap'"
+    ).fetchone()
+    assert src is not None
+    assert src["license"] == "ODbL"
+
+    # topology lookup
+    topo = lookups.list_active(conn, "lookup_site_topology")
+    names = {v.name for v in topo}
+    assert {"reef", "wall", "wreck", "cave", "blue_hole"}.issubset(names)
+
+
+def test_site_with_external_id_and_topology(conn: sqlite3.Connection) -> None:
+    # Get the opendivemap source id (seeded by migration 002)
+    src = conn.execute(
+        "SELECT id FROM site_source WHERE system_name='opendivemap'"
+    ).fetchone()
+    env = lookups.get_by_name(conn, "lookup_site_environment", "ocean")
+    entry = lookups.get_by_name(conn, "lookup_entry_type", "boat")
+    topo = [lookups.get_by_name(conn, "lookup_site_topology", n).id
+            for n in ("reef", "wall")]
+
+    # Pre-register the country. The importer handles this on its own via the
+    # country_name field from opendivemap; the repository itself enforces FKs.
+    conn.execute(
+        "INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)",
+        ("BQ", "Bonaire"),
+    )
+
+    site = sites.find_or_create(
+        conn,
+        "Salt Pier",
+        country_code="BQ",
+        latitude=12.15,
+        longitude=-68.27,
+        sea_mrgid=4287,
+        environment_id=env.id,
+        entry_id=entry.id,
+        max_depth_m=40.0,
+        external_id=(src["id"], "abc123", "https://opendivemap.com/site/abc123"),
+        topologies=topo,
+    )
+
+    assert site.id is not None
+    assert site.country_code == "BQ"
+    assert site.country_name == "Bonaire"
+    assert site.max_depth_m == 40.0
+
+    tops = sites.get_topologies(conn, site.id)
+    assert {t.name for t in tops} == {"reef", "wall"}
+
+    ext = sites.get_external_ids(conn, site.id)
+    assert len(ext) == 1
+    assert ext[0].system_name == "opendivemap"
+    assert ext[0].external_id == "abc123"
+
+    # Dedup on re-import
+    again = sites.find_or_create(
+        conn, "Salt Pier", country_code="BQ",
+        external_id=(src["id"], "abc123", None),
+    )
+    assert again.id == site.id
+
+
+def test_environment_check_constraint(conn: sqlite3.Connection) -> None:
+    # `is_active` is the only check constraint on lookup tables
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO lookup_site_environment (name, is_active) VALUES (?, ?)",
+            ("bogus", 2),
+        )
 
 
 # ---------------------------------------------------------------------------

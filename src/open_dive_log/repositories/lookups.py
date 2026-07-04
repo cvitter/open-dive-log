@@ -20,6 +20,8 @@ LOOKUP_TABLES: tuple[str, ...] = (
     "lookup_gas_type",
     "lookup_purpose",
     "lookup_buddy_role",
+    "lookup_site_environment",
+    "lookup_site_topology",
 )
 
 
