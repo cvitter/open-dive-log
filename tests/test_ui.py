@@ -94,10 +94,16 @@ def test_load_rows_orders_by_date_desc(conn: sqlite3.Connection) -> None:
 
 def test_format_depth() -> None:
     from open_dive_log.ui.dive_table_model import _format_depth
-    assert _format_depth(None) == ""
-    assert _format_depth(24.0) == "24 m"
-    assert _format_depth(24.5) == "24.5 m"
-    assert _format_depth(0.0) == "0 m"
+    from open_dive_log.units import UnitSystem
+    metric = UnitSystem.METRIC
+    imperial = UnitSystem.IMPERIAL
+    assert _format_depth(None, metric) == ""
+    assert _format_depth(24.0, metric) == "24 m"
+    assert _format_depth(24.5, metric) == "24.5 m"
+    assert _format_depth(0.0, metric) == "0 m"
+    # 24 m ≈ 78.7 ft
+    assert _format_depth(24.0, imperial) == "78.7 ft"
+    assert _format_depth(None, imperial) == ""
 
 
 # ---------------------------------------------------------------------------

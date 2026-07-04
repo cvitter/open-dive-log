@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from open_dive_log.repositories import buddies, dives, sites as sites_repo
+from open_dive_log.units import UnitSystem, display_distance, display_temp
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +46,7 @@ def assemble_dive_detail(conn: sqlite3.Connection, dive_id: int) -> dict[str, An
             d.run_time_minutes,
             d.entry_notes, d.surface_conditions_notes, d.notes,
             d.max_depth_m, d.avg_depth_m,
+            d.air_temp_c, d.water_temp_c, d.visibility_m,
             d.o2_percentage, d.mix_notes, d.gear_notes,
             d.created_at, d.updated_at,
             tod.name        AS time_of_day,
@@ -90,9 +92,13 @@ def assemble_dive_detail(conn: sqlite3.Connection, dive_id: int) -> dict[str, An
         "Surface conditions": row["surface_conditions"],
         "Surface notes": row["surface_conditions_notes"],
         "Surface run time (min)": row["run_time_minutes"],
-        # depth
+        # depth (meters in DB — formatted by caller based on unit toggle)
         "Max depth (m)": row["max_depth_m"],
         "Avg depth (m)": row["avg_depth_m"],
+        # conditions (metric in DB — formatted by caller)
+        "Air temp (C)": row["air_temp_c"],
+        "Water temp (C)": row["water_temp_c"],
+        "Visibility (m)": row["visibility_m"],
         # gas
         "Equipment": row["equipment_type"],
         "Tank type": row["tank_type"],
@@ -124,16 +130,36 @@ def _fmt(value: Any) -> str:
     return str(value)
 
 
+def _fmt_temp(c: float | None, system: UnitSystem) -> str:
+    """Format a stored °C temperature for the user's chosen unit system."""
+    val, unit = display_temp(c, system)
+    if val is None:
+        return "—"
+    if isinstance(val, float) and val == int(val):
+        return f"{int(val)} {unit}"
+    return f"{val:.1f} {unit}"
+
+
+def _fmt_distance(m: float | None, system: UnitSystem) -> str:
+    val, unit = display_distance(m, system)
+    if val is None:
+        return "—"
+    if isinstance(val, float) and val == int(val):
+        return f"{int(val)} {unit}"
+    return f"{val:.1f} {unit}"
+
+
 # ---------------------------------------------------------------------------
 # Qt widget
 # ---------------------------------------------------------------------------
 class DiveDetailDialog(QDialog):
     """Modal dialog showing every field for one dive, read-only."""
 
-    def __init__(self, conn: sqlite3.Connection, dive_id: int, parent=None) -> None:
+    def __init__(self, conn: sqlite3.Connection, dive_id: int, parent=None, unit_system: UnitSystem = UnitSystem.METRIC) -> None:
         super().__init__(parent)
         self._conn = conn
         self._dive_id = dive_id
+        self._units = unit_system
 
         data = assemble_dive_detail(conn, dive_id)
         if data is None:
@@ -166,6 +192,9 @@ class DiveDetailDialog(QDialog):
         ], data))
         body_layout.addWidget(self._build_section("Depth", [
             "Max depth (m)", "Avg depth (m)",
+        ], data))
+        body_layout.addWidget(self._build_section("Conditions", [
+            "Air temp (C)", "Water temp (C)", "Visibility (m)",
         ], data))
         body_layout.addWidget(self._build_section("Equipment & gas", [
             "Equipment", "Tank type", "Tank configuration", "Gas type",
@@ -217,7 +246,9 @@ class DiveDetailDialog(QDialog):
         form.setVerticalSpacing(4)
         for key in keys:
             label = QLabel(_label_for(key) + ":")
-            value = QLabel(_fmt(data.get(key)))
+            # Use unit-aware formatter for temp/distance keys
+            value_text = _format_key(key, data, self._units)
+            value = QLabel(value_text)
             if small:
                 vlabel_font = value.font()
                 vlabel_font.setPointSize(max(vlabel_font.pointSize() - 1, 7))
@@ -227,6 +258,22 @@ class DiveDetailDialog(QDialog):
             form.addRow(label, value)
         v.addLayout(form)
         return container
+
+
+def _format_key(key: str, data: dict[str, Any], units: UnitSystem) -> str:
+    """Format a detail dialog field value, applying unit conversion for
+    depth / temp / visibility keys."""
+    if key == "Max depth (m)":
+        return _fmt_distance(data.get("Max depth (m)"), units)
+    if key == "Avg depth (m)":
+        return _fmt_distance(data.get("Avg depth (m)"), units)
+    if key == "Air temp (C)":
+        return _fmt_temp(data.get("Air temp (C)"), units)
+    if key == "Water temp (C)":
+        return _fmt_temp(data.get("Water temp (C)"), units)
+    if key == "Visibility (m)":
+        return _fmt_distance(data.get("Visibility (m)"), units)
+    return _fmt(data.get(key))
 
 
 def _label_for(key: str) -> str:

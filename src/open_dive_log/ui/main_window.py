@@ -2,20 +2,23 @@
 
 Layout:
     QMainWindow
-    ├── menu bar:  Dives / Sites / Certifications / Lookups / Help
+    ├── menu bar:  Dives / Sites / Certifications / View / Lookups / Help
     ├── central:   QTableView bound to DiveTableModel (the dive list)
     └── status bar
 
 Menus:
-    Dives:          New Dive (disabled), Edit Dive (disabled), Delete Dive (disabled),
-                    List Dives, ---, Quit
+    Dives:          New Dive, Edit Dive, Delete Dive, List Dives, Quit
     Sites:          List Sites, ---, Import from opendivemap, ---,
-                    New Site (disabled), Edit Site (disabled), Delete Site (disabled)
-    Certifications: List Certifications… (opens the certs list window)
+                    New/Edit/Delete Site (disabled placeholders)
+    Certifications: List Certifications…
+    View:           Units → Metric / Imperial (persisted, toggles the
+                    dive list and the next opened dive form)
     Lookups:        Manage Lookups (disabled — coming soon)
     Help:           About Open Dive Log
 
-Double-clicking a row in the table opens a read-only DiveDetailDialog.
+Double-clicking a row in the table opens the dive in the edit form
+(same as the menu's Edit Dive). Double-click is the only path that
+mutates a dive.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ import threading
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QHeaderView,
     QMainWindow,
@@ -36,8 +39,9 @@ from PySide6.QtWidgets import (
 )
 
 from open_dive_log.repositories import dives
-from open_dive_log import __version__, import_opendivemap
+from open_dive_log import __version__, import_opendivemap, preferences
 from open_dive_log.db import get_default_db_path, get_sqlite_version
+from open_dive_log.units import UnitSystem
 from open_dive_log.ui.cert_add_edit_dialog import CertAddEditDialog  # noqa: F401
 from open_dive_log.ui.cert_list_window import CertListWindow
 from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
@@ -210,6 +214,34 @@ class MainWindow(QMainWindow):
         action_manage_lookups.setToolTip("Coming in a later phase")
         lookups_menu.addAction(action_manage_lookups)
 
+        # --- View (units toggle, persisted across restarts) ---
+        view_menu = bar.addMenu("&View")
+        units_menu = view_menu.addMenu("&Units")
+        # QActionGroup makes the two actions mutually exclusive; the
+        # active one shows a check mark. Persisted to
+        # ~/.open-dive-log/preferences.json via open_dive_log.preferences.
+        self._unit_group = QActionGroup(self)
+        self._unit_group.setExclusive(True)
+        self._action_units_metric = QAction("&Metric (°C, m)", self)
+        self._action_units_metric.setCheckable(True)
+        self._action_units_imperial = QAction("&Imperial (°F, ft)", self)
+        self._action_units_imperial.setCheckable(True)
+        self._unit_group.addAction(self._action_units_metric)
+        self._unit_group.addAction(self._action_units_imperial)
+        units_menu.addAction(self._action_units_metric)
+        units_menu.addAction(self._action_units_imperial)
+        # Initialize the active action from the persisted preference,
+        # defaulting to metric if the file is missing or malformed.
+        initial_units = preferences.get_units()
+        if initial_units == UnitSystem.IMPERIAL:
+            self._action_units_imperial.setChecked(True)
+        else:
+            self._action_units_metric.setChecked(True)
+        # Set the model's units to match the active preference so the
+        # initial list view is rendered in the user's chosen unit.
+        self._model.set_unit_system(initial_units)
+        self._unit_group.triggered.connect(self._on_units_changed)
+
         # --- Help ---
         help_menu = bar.addMenu("&Help")
         action_about = QAction("&About Open Dive Log", self)
@@ -229,6 +261,38 @@ class MainWindow(QMainWindow):
             5000,
         )
 
+    def _on_units_changed(self, action: QAction) -> None:
+        """Handle the View > Units toggle.
+
+        Persists the choice to ~/.open-dive-log/preferences.json, then
+        tells the dive list model to re-render in the new units. The
+        next time a DiveAddEditDialog is opened (New Dive / Edit Dive
+        / double-click), it picks up the new unit system from
+        preferences.get_units() — see the call sites in _on_new_dive
+        and _edit_dive_by_id. The SitesListWindow does not display
+        dive data so it is unaffected.
+        """
+        if action is self._action_units_imperial:
+            new_units = UnitSystem.IMPERIAL
+        elif action is self._action_units_metric:
+            new_units = UnitSystem.METRIC
+        else:
+            # Defensive: should not happen with an exclusive group.
+            return
+        try:
+            preferences.set_units(new_units)
+        except OSError as e:
+            QMessageBox.warning(
+                self,
+                "Units preference",
+                f"Could not save the units preference: {e}. "
+                "The display will update, but the choice won't be "
+                "remembered for the next launch.",
+            )
+        self._model.set_unit_system(new_units)
+        label = "Imperial (°F, ft)" if new_units == UnitSystem.IMPERIAL else "Metric (°C, m)"
+        self.statusBar().showMessage(f"Units: {label}", 5000)
+
     def _on_row_double_clicked(self, index) -> None:
         if not index.isValid():
             return
@@ -239,7 +303,10 @@ class MainWindow(QMainWindow):
         self._edit_dive_by_id(row.id)
 
     def _on_new_dive(self) -> None:
-        dlg = DiveAddEditDialog(self._conn, dive=None, parent=self)
+        dlg = DiveAddEditDialog(
+            self._conn, dive=None, parent=self,
+            unit_system=preferences.get_units(),
+        )
         if dlg.exec() != DiveAddEditDialog.DialogCode.Accepted:
             return
         submitted = dlg.result_dive()
@@ -274,7 +341,10 @@ class MainWindow(QMainWindow):
         if full is None:
             QMessageBox.warning(self, "Edit", f"Dive #{dive_id} no longer exists.")
             return
-        dlg = DiveAddEditDialog(self._conn, dive=full, parent=self)
+        dlg = DiveAddEditDialog(
+            self._conn, dive=full, parent=self,
+            unit_system=preferences.get_units(),
+        )
         if dlg.exec() != DiveAddEditDialog.DialogCode.Accepted:
             return
         submitted = dlg.result_dive()

@@ -20,7 +20,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
+    # pytest 9.0 made `import pygments` unconditional in
+    # _pytest/_io/terminalwriter.py. Pygments is no longer a pytest
+    # dependency, so on a fresh install pytest 9 crashes at import
+    # time with ModuleNotFoundError. Pin to <9 until the ecosystem
+    # sorts itself out. (Reproduced 2026-07-04.)
+    "pytest>=8.0,<9",
     "ruff>=0.5",
 ]
 

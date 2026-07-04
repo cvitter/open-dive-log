@@ -236,6 +236,7 @@ def test_submitted_dive_to_kwargs_round_trips() -> None:
         entry_type_id=None, entry_notes="Slid in from the boat",
         surface_conditions_id=None, surface_conditions_notes=None, run_time_minutes=10,
         max_depth_m=24.0, avg_depth_m=18.0,
+        air_temp_c=28.0, water_temp_c=27.0, visibility_m=20.0,
         equipment_type_id=None, tank_type_id=None, tank_configuration_id=None,
         gas_type_id=None, o2_percentage=32.0, mix_notes=None, gear_notes=None,
         purpose_id=None, notes="Great viz",
@@ -248,5 +249,9 @@ def test_submitted_dive_to_kwargs_round_trips() -> None:
     assert kw["dive_date"] == "2026-06-15"
     assert kw["max_depth_m"] == 24.0
     assert kw["o2_percentage"] == 32.0
+    # New conditions fields (migration 005) must round-trip through to_kwargs
+    assert kw["air_temp_c"] == 28.0
+    assert kw["water_temp_c"] == 27.0
+    assert kw["visibility_m"] == 20.0
     assert sub.site_ids == [1, 2]
     assert sub.buddy_entries == [(3, 4)]

@@ -50,6 +50,13 @@ from open_dive_log.repositories import (
     lookups,
     sites as sites_repo,
 )
+from open_dive_log.units import (
+    UnitSystem,
+    c_to_f,
+    f_to_c,
+    ft_to_m,
+    m_to_ft,
+)
 
 
 # Tables that need to be loaded into comboboxes. (id, name) ordering
@@ -74,6 +81,8 @@ class SubmittedDive:
     then `dives.attach_sites(...)` and `dives.attach_buddies(...)`.
 
     `slots=True` means no __dict__; use `to_kwargs()` for the splat.
+    All temperature / distance fields are in metric (°C, meters) — the
+    form does the imperial→metric conversion at Save time.
     """
     # when
     dive_date: str
@@ -88,9 +97,13 @@ class SubmittedDive:
     surface_conditions_id: int | None
     surface_conditions_notes: str | None
     run_time_minutes: int | None
-    # depth
+    # depth (meters)
     max_depth_m: float | None
     avg_depth_m: float | None
+    # conditions (metric)
+    air_temp_c: float | None
+    water_temp_c: float | None
+    visibility_m: float | None
     # equipment
     equipment_type_id: int | None
     tank_type_id: int | None
@@ -120,6 +133,9 @@ class SubmittedDive:
             "run_time_minutes": self.run_time_minutes,
             "max_depth_m": self.max_depth_m,
             "avg_depth_m": self.avg_depth_m,
+            "air_temp_c": self.air_temp_c,
+            "water_temp_c": self.water_temp_c,
+            "visibility_m": self.visibility_m,
             "equipment_type_id": self.equipment_type_id,
             "tank_type_id": self.tank_type_id,
             "tank_configuration_id": self.tank_configuration_id,
@@ -138,10 +154,12 @@ class DiveAddEditDialog(QDialog):
         conn: sqlite3.Connection,
         dive: dives.DiveFull | None = None,
         parent=None,
+        unit_system: UnitSystem = UnitSystem.METRIC,
     ) -> None:
         super().__init__(parent)
         self._conn = conn
         self._original = dive
+        self._units = unit_system
         self.setWindowTitle("Edit Dive" if dive else "Add Dive")
         self.setModal(True)
         self.resize(720, 820)
@@ -174,6 +192,7 @@ class DiveAddEditDialog(QDialog):
         body_layout.addWidget(self._build_entry_section(dive))
         body_layout.addWidget(self._build_surface_section(dive))
         body_layout.addWidget(self._build_depth_section(dive))
+        body_layout.addWidget(self._build_conditions_section(dive))
         body_layout.addWidget(self._build_equipment_section(dive))
         body_layout.addWidget(self._build_sites_section(dive))
         body_layout.addWidget(self._build_buddies_section(dive))
@@ -287,18 +306,54 @@ class DiveAddEditDialog(QDialog):
         container = QWidget()
         v = QVBoxLayout(container)
         v.setContentsMargins(0, 0, 0, 0)
-        v.addWidget(self._header("Depth (m)"))
+        # Section title shows the current distance unit
+        v.addWidget(self._header(f"Depth ({self._distance_unit()})"))
         form = QFormLayout()
 
         self._max_depth = self._make_depth_spin()
         if dive and dive.max_depth_m is not None:
-            self._max_depth.setValue(dive.max_depth_m)
+            display = m_to_ft(dive.max_depth_m) if self._units == UnitSystem.IMPERIAL else dive.max_depth_m
+            self._max_depth.setValue(display)
         form.addRow("Max depth:", self._max_depth)
 
         self._avg_depth = self._make_depth_spin()
         if dive and dive.avg_depth_m is not None:
-            self._avg_depth.setValue(dive.avg_depth_m)
+            display = m_to_ft(dive.avg_depth_m) if self._units == UnitSystem.IMPERIAL else dive.avg_depth_m
+            self._avg_depth.setValue(display)
         form.addRow("Avg depth:", self._avg_depth)
+
+        v.addLayout(form)
+        return container
+
+    def _build_conditions_section(self, dive: dives.DiveFull | None) -> QWidget:
+        """Air / water temperature and visibility. All fields honor the
+        unit toggle; the form converts back to metric on Save."""
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self._header("Conditions"))
+        form = QFormLayout()
+
+        # Air temp
+        self._air_temp = self._make_temp_spin()
+        if dive and dive.air_temp_c is not None:
+            display = c_to_f(dive.air_temp_c) if self._units == UnitSystem.IMPERIAL else dive.air_temp_c
+            self._air_temp.setValue(display)
+        form.addRow(f"Air temp ({self._temp_unit()}):", self._air_temp)
+
+        # Water temp
+        self._water_temp = self._make_temp_spin()
+        if dive and dive.water_temp_c is not None:
+            display = c_to_f(dive.water_temp_c) if self._units == UnitSystem.IMPERIAL else dive.water_temp_c
+            self._water_temp.setValue(display)
+        form.addRow(f"Water temp ({self._temp_unit()}):", self._water_temp)
+
+        # Visibility
+        self._visibility = self._make_distance_spin()
+        if dive and dive.visibility_m is not None:
+            display = m_to_ft(dive.visibility_m) if self._units == UnitSystem.IMPERIAL else dive.visibility_m
+            self._visibility.setValue(display)
+        form.addRow(f"Visibility ({self._distance_unit()}):", self._visibility)
 
         v.addLayout(form)
         return container
@@ -519,8 +574,24 @@ class DiveAddEditDialog(QDialog):
         s = QDoubleSpinBox()
         s.setRange(0.0, 999.0)
         s.setDecimals(1)
-        s.setSuffix(" m")
+        s.setSuffix(f" {self._distance_unit()}")
         return s
+
+    def _make_distance_spin(self) -> QDoubleSpinBox:
+        return self._make_depth_spin()  # same range, same suffix logic
+
+    def _make_temp_spin(self) -> QDoubleSpinBox:
+        s = QDoubleSpinBox()
+        s.setRange(-50.0, 60.0)
+        s.setDecimals(1)
+        s.setSuffix(f" {self._temp_unit()}")
+        return s
+
+    def _temp_unit(self) -> str:
+        return "°F" if self._units == UnitSystem.IMPERIAL else "°C"
+
+    def _distance_unit(self) -> str:
+        return "ft" if self._units == UnitSystem.IMPERIAL else "m"
 
     # ------------------------------------------------------------------
     # Sites picker: refresh, add, remove, reorder, create inline
@@ -677,8 +748,20 @@ class DiveAddEditDialog(QDialog):
         # Optional integer / float fields: treat 0 as "not entered" for
         # spinboxes that allow it. (Depth 0 is technically valid, but
         # unlikely; if you want 0 stored, you can set it later.)
-        max_depth = self._max_depth.value() or None
-        avg_depth = self._avg_depth.value() or None
+        # For temp/visibility, "0" is also a valid display value
+        # (ice diving, black water) so we DON'T treat 0 as None there.
+        if self._units == UnitSystem.IMPERIAL:
+            max_depth = ft_to_m(self._max_depth.value()) or None
+            avg_depth = ft_to_m(self._avg_depth.value()) or None
+            air_temp = f_to_c(self._air_temp.value()) if self._air_temp.value() != 0 else None
+            water_temp = f_to_c(self._water_temp.value()) if self._water_temp.value() != 0 else None
+            visibility = ft_to_m(self._visibility.value()) or None
+        else:
+            max_depth = self._max_depth.value() or None
+            avg_depth = self._avg_depth.value() or None
+            air_temp = self._air_temp.value() if self._air_temp.value() != 0 else None
+            water_temp = self._water_temp.value() if self._water_temp.value() != 0 else None
+            visibility = self._visibility.value() or None
         run_time = self._run_time.value() or None
         o2 = self._o2.value() or None
 
@@ -708,6 +791,9 @@ class DiveAddEditDialog(QDialog):
             run_time_minutes=run_time,
             max_depth_m=max_depth,
             avg_depth_m=avg_depth,
+            air_temp_c=air_temp,
+            water_temp_c=water_temp,
+            visibility_m=visibility,
             equipment_type_id=_lookup_id(self._equipment_type),
             tank_type_id=_lookup_id(self._tank_type),
             tank_configuration_id=_lookup_id(self._tank_config),

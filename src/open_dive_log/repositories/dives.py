@@ -28,7 +28,7 @@ class Dive:
 
 @dataclass(frozen=True, slots=True)
 class DiveFull:
-    """All 22 user-input fields on a dive, plus the bookkeeping timestamps.
+    """All 25 user-input fields on a dive, plus the bookkeeping timestamps.
 
     Used by the add/edit form and the detail dialog. The list view uses
     `Dive` (or the dict-shaped output of `list_recent_with_sites`) to
@@ -48,9 +48,13 @@ class DiveFull:
     surface_conditions_id: int | None
     surface_conditions_notes: str | None
     run_time_minutes: int | None
-    # depth
+    # depth (stored in meters)
     max_depth_m: float | None
     avg_depth_m: float | None
+    # conditions (metric)
+    air_temp_c: float | None
+    water_temp_c: float | None
+    visibility_m: float | None
     # equipment
     equipment_type_id: int | None
     tank_type_id: int | None
@@ -85,6 +89,9 @@ def create(
     run_time_minutes: int | None = None,
     max_depth_m: float | None = None,
     avg_depth_m: float | None = None,
+    air_temp_c: float | None = None,
+    water_temp_c: float | None = None,
+    visibility_m: float | None = None,
     equipment_type_id: int | None = None,
     tank_type_id: int | None = None,
     tank_configuration_id: int | None = None,
@@ -104,6 +111,7 @@ def create(
             surface_conditions_id, surface_conditions_notes,
             run_time_minutes,
             max_depth_m, avg_depth_m,
+            air_temp_c, water_temp_c, visibility_m,
             equipment_type_id, tank_type_id, tank_configuration_id, gas_type_id,
             o2_percentage, mix_notes, gear_notes,
             purpose_id, notes
@@ -113,6 +121,7 @@ def create(
             ?, ?,
             ?,
             ?, ?,
+            ?, ?, ?,
             ?, ?, ?, ?,
             ?, ?, ?,
             ?, ?
@@ -124,6 +133,7 @@ def create(
             surface_conditions_id, surface_conditions_notes,
             run_time_minutes,
             max_depth_m, avg_depth_m,
+            air_temp_c, water_temp_c, visibility_m,
             equipment_type_id, tank_type_id, tank_configuration_id, gas_type_id,
             o2_percentage, mix_notes, gear_notes,
             purpose_id, notes,
@@ -263,12 +273,19 @@ def list_recent(conn: sqlite3.Connection, limit: int = 50) -> list[Dive]:
     ]
 
 
-def list_recent_with_sites(conn: sqlite3.Connection, limit: int = 500) -> list[dict]:
+def list_recent_with_sites(
+    conn: sqlite3.Connection, limit: int = 500
+) -> list[dict]:
     """Return one row per dive, with the comma-joined site names.
 
     The list view needs (dive_id, date, time, sites, max_depth) without
     a second round-trip per row. The GROUP_CONCAT keeps it to a single
     query. For dives with multiple sites, they're returned in site_order.
+
+    Also returns the new conditions columns (air_temp_c, water_temp_c,
+    visibility_m) so the list view can render them when the user is in
+    imperial mode. The fields are metric in the DB; the list view does
+    the conversion at display time.
 
     Returned dict shape (stable for the UI layer):
         {
@@ -278,6 +295,9 @@ def list_recent_with_sites(conn: sqlite3.Connection, limit: int = 500) -> list[d
             "end_time": str | None,
             "dive_time_minutes": int | None,
             "max_depth_m": float | None,
+            "air_temp_c": float | None,
+            "water_temp_c": float | None,
+            "visibility_m": float | None,
             "sites": str,         # "Salt Pier, Karpata" or "" if none
         }
     """
@@ -286,6 +306,7 @@ def list_recent_with_sites(conn: sqlite3.Connection, limit: int = 500) -> list[d
         SELECT
             d.id, d.dive_date, d.start_time, d.end_time,
             d.dive_time_minutes, d.max_depth_m,
+            d.air_temp_c, d.water_temp_c, d.visibility_m,
             GROUP_CONCAT(s.name, ', ') AS sites
         FROM dive d
         LEFT JOIN dive_site ds ON ds.dive_id = d.id
@@ -304,6 +325,9 @@ def list_recent_with_sites(conn: sqlite3.Connection, limit: int = 500) -> list[d
             "end_time": r["end_time"],
             "dive_time_minutes": r["dive_time_minutes"],
             "max_depth_m": r["max_depth_m"],
+            "air_temp_c": r["air_temp_c"],
+            "water_temp_c": r["water_temp_c"],
+            "visibility_m": r["visibility_m"],
             "sites": r["sites"] or "",
         }
         for r in rows
@@ -318,6 +342,7 @@ _FULL_COLS = (
     "entry_type_id, entry_notes, "
     "surface_conditions_id, surface_conditions_notes, run_time_minutes, "
     "max_depth_m, avg_depth_m, "
+    "air_temp_c, water_temp_c, visibility_m, "
     "equipment_type_id, tank_type_id, tank_configuration_id, gas_type_id, "
     "o2_percentage, mix_notes, gear_notes, "
     "purpose_id, notes, "
@@ -345,6 +370,9 @@ def get_full(conn: sqlite3.Connection, dive_id: int) -> DiveFull | None:
         run_time_minutes=row["run_time_minutes"],
         max_depth_m=row["max_depth_m"],
         avg_depth_m=row["avg_depth_m"],
+        air_temp_c=row["air_temp_c"],
+        water_temp_c=row["water_temp_c"],
+        visibility_m=row["visibility_m"],
         equipment_type_id=row["equipment_type_id"],
         tank_type_id=row["tank_type_id"],
         tank_configuration_id=row["tank_configuration_id"],
@@ -375,6 +403,9 @@ def update(
     run_time_minutes: int | None = None,
     max_depth_m: float | None = None,
     avg_depth_m: float | None = None,
+    air_temp_c: float | None = None,
+    water_temp_c: float | None = None,
+    visibility_m: float | None = None,
     equipment_type_id: int | None = None,
     tank_type_id: int | None = None,
     tank_configuration_id: int | None = None,
@@ -399,6 +430,7 @@ def update(
             surface_conditions_id = ?, surface_conditions_notes = ?,
             run_time_minutes = ?,
             max_depth_m = ?, avg_depth_m = ?,
+            air_temp_c = ?, water_temp_c = ?, visibility_m = ?,
             equipment_type_id = ?, tank_type_id = ?,
             tank_configuration_id = ?, gas_type_id = ?,
             o2_percentage = ?, mix_notes = ?, gear_notes = ?,
@@ -412,6 +444,7 @@ def update(
             surface_conditions_id, surface_conditions_notes,
             run_time_minutes,
             max_depth_m, avg_depth_m,
+            air_temp_c, water_temp_c, visibility_m,
             equipment_type_id, tank_type_id,
             tank_configuration_id, gas_type_id,
             o2_percentage, mix_notes, gear_notes,
