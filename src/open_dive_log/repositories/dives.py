@@ -218,3 +218,50 @@ def list_recent(conn: sqlite3.Connection, limit: int = 50) -> list[Dive]:
              r["dive_time_minutes"], r["notes"])
         for r in rows
     ]
+
+
+def list_recent_with_sites(conn: sqlite3.Connection, limit: int = 500) -> list[dict]:
+    """Return one row per dive, with the comma-joined site names.
+
+    The list view needs (dive_id, date, time, sites, max_depth) without
+    a second round-trip per row. The GROUP_CONCAT keeps it to a single
+    query. For dives with multiple sites, they're returned in site_order.
+
+    Returned dict shape (stable for the UI layer):
+        {
+            "id": int,
+            "dive_date": str,
+            "start_time": str | None,
+            "end_time": str | None,
+            "dive_time_minutes": int | None,
+            "max_depth_m": float | None,
+            "sites": str,         # "Salt Pier, Karpata" or "" if none
+        }
+    """
+    rows = conn.execute(
+        """
+        SELECT
+            d.id, d.dive_date, d.start_time, d.end_time,
+            d.dive_time_minutes, d.max_depth_m,
+            GROUP_CONCAT(s.name, ', ') AS sites
+        FROM dive d
+        LEFT JOIN dive_site ds ON ds.dive_id = d.id
+        LEFT JOIN site s ON s.id = ds.site_id
+        GROUP BY d.id
+        ORDER BY d.dive_date DESC, d.start_time DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "dive_date": r["dive_date"],
+            "start_time": r["start_time"],
+            "end_time": r["end_time"],
+            "dive_time_minutes": r["dive_time_minutes"],
+            "max_depth_m": r["max_depth_m"],
+            "sites": r["sites"] or "",
+        }
+        for r in rows
+    ]

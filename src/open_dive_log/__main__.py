@@ -4,7 +4,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from open_dive_log.app import MainWindow
+from open_dive_log.ui import MainWindow
 
 
 def main() -> int:

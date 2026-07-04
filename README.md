@@ -4,13 +4,39 @@ An open-source desktop application for logging scuba dives.
 
 ## Status
 
-Early scaffold. Not yet functional.
+GUI scaffold: dive list, detail popup, sites list, menus, and opendivemap
+importer are all in place. New/Edit/Delete of dives and sites are
+placeholders — read-only view for now.
 
 ## Tech stack
 
 - Python 3.14
 - PySide6 6.8+ (Qt 6 GUI; 6.11.1 verified)
 - SQLite 3.53.x (Python's bundled `sqlite3` module)
+
+## Run
+
+```bash
+.venv/bin/python -m open_dive_log                   # the GUI
+.venv/bin/python -m open_dive_log.import_opendivemap  # the importer
+.venv/bin/python -m pytest                           # 42 tests
+```
+
+## GUI
+
+The main window shows a list of dives (Date, Site, Max depth), sorted
+newest first. Double-click a row to see the full record in a read-only
+detail dialog.
+
+Menus:
+
+* **Dives** — New/Edit/Delete (placeholders, coming soon), List Dives, Quit
+* **Sites** — List Sites, Import from opendivemap, New/Edit/Delete (placeholders)
+* **Lookups** — Manage Lookups (placeholder)
+* **Help** — About
+
+The opendivemap import runs on a background `QThread` so the UI stays
+responsive; a confirmation dialog shows the final counts when it finishes.
 
 ## Schema
 
@@ -19,24 +45,22 @@ per field, app-managed), with seed values applied by migration 001.
 Multi-site dives use the `dive_site` join with `site_order` to preserve the
 order. Buddies are deduped on a normalized full_name.
 
-The full DDL is in `src/open_dive_log/migrations/001_init.sql`.
+`site` is connected to opendivemap via the `site_source` +
+`site_external_id` multi-source pattern; migration 002 added country,
+topology, environment, and the external-id plumbing. Migration 003 added
+`site.description` and `site.description_wildlife` from the upstream `tags`
+bag.
 
-## Setup
+The full DDL is in `src/open_dive_log/migrations/001_init.sql`,
+`002_opendivemap.sql`, and `003_site_descriptions.sql`.
+
+## Setup from scratch
 
 ```bash
 python3.14 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
-.venv/bin/python -m pytest      # 19 tests
-.venv/bin/python -m open_dive_log
+.venv/bin/python -c "import sqlite3; print(sqlite3.sqlite_version)"   # 3.53.x
 ```
-
-## Verify SQLite version
-
-```bash
-.venv/bin/python -c "import sqlite3; print(sqlite3.sqlite_version)"
-```
-
-Should print `3.53.x`.
 
 ## License
 
