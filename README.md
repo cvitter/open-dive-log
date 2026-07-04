@@ -10,7 +10,7 @@ placeholders — read-only view for now.
 
 ## Tech stack
 
-- Python 3.14
+- Python 3.13 (was 3.14 — switched because PySide6 6.11.1's Cocoa plugin doesn't load on macOS arm64 under 3.14; 3.13 works)
 - PySide6 6.8+ (Qt 6 GUI; 6.11.1 verified)
 - SQLite 3.53.x (Python's bundled `sqlite3` module)
 
@@ -69,7 +69,8 @@ The full DDL is in `src/open_dive_log/migrations/001_init.sql`,
 ## Setup from scratch
 
 ```bash
-python3.14 -m venv .venv
+brew install python@3.13
+python3.13 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 .venv/bin/python -c "import sqlite3; print(sqlite3.sqlite_version)"   # 3.53.x
 ```

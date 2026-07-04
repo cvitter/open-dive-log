@@ -18,10 +18,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$HERE/.." && pwd)"
 
-VENV_PY="$PROJECT_ROOT/.venv/bin/python3.14"
+VENV_PY="$PROJECT_ROOT/.venv/bin/python3.13"
 if [[ ! -x "$VENV_PY" ]]; then
     echo "open-dive-log: venv python not found at $VENV_PY" >&2
-    echo "open-dive-log: run: python3.14 -m venv .venv && .venv/bin/python3.14 -m pip install -e '.[dev]'" >&2
+    echo "open-dive-log: run: brew install python@3.13 && python3.13 -m venv .venv && .venv/bin/python -m pip install -e '.[dev]'" >&2
     exit 1
 fi
 
