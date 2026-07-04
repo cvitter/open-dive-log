@@ -11,14 +11,18 @@ import pytest
 from open_dive_log import preferences
 from open_dive_log.units import (
     UnitSystem,
+    bar_to_psi,
     c_to_f,
     f_to_c,
     ft_to_m,
     m_to_ft,
-    display_temp,
     display_distance,
-    temp_unit_label,
+    display_pressure,
+    display_temp,
     distance_unit_label,
+    pressure_unit_label,
+    psi_to_bar,
+    temp_unit_label,
 )
 
 
@@ -169,3 +173,68 @@ def test_prefs_atomic_write(isolated_prefs: Path) -> None:
     can check that no .tmp file lingers after a successful write."""
     preferences.set_units(UnitSystem.IMPERIAL)
     assert not (isolated_prefs.parent / "preferences.json.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# Pressure conversions
+# ---------------------------------------------------------------------------
+def test_bar_to_psi_one_bar() -> None:
+    assert bar_to_psi(1.0) == pytest.approx(14.5037738, abs=1e-6)
+
+
+def test_psi_to_bar_one_psi() -> None:
+    assert psi_to_bar(1.0) == pytest.approx(0.0689476, abs=1e-6)
+
+
+def test_bar_to_psi_typical_fill() -> None:
+    # 200 BAR (standard European fill) → ~2900.75 PSI
+    assert bar_to_psi(200.0) == pytest.approx(2900.7548, abs=1e-2)
+
+
+def test_psi_to_bar_typical_fill() -> None:
+    # 3000 PSI (standard US fill) → ~206.84 BAR
+    assert psi_to_bar(3000.0) == pytest.approx(206.8427, abs=1e-3)
+
+
+def test_round_trip_pressure_bar_psi() -> None:
+    """BAR → PSI → BAR returns the original (within float precision)."""
+    for bar in (0, 50, 100, 200, 232, 300, 350):
+        assert psi_to_bar(bar_to_psi(bar)) == pytest.approx(bar, abs=1e-9)
+
+
+def test_round_trip_pressure_psi_bar() -> None:
+    for psi in (0, 500, 1500, 2900, 3364, 4351, 5076):
+        assert bar_to_psi(psi_to_bar(psi)) == pytest.approx(psi, abs=1e-9)
+
+
+def test_zero_pressure_round_trips() -> None:
+    """0 BAR (empty tank) and 0 PSI (empty tank) are both real values,
+    not 'not entered'. Round-trip must preserve 0."""
+    assert bar_to_psi(0.0) == 0.0
+    assert psi_to_bar(0.0) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Pressure display helpers
+# ---------------------------------------------------------------------------
+def test_display_pressure_metric() -> None:
+    val, unit = display_pressure(200.0, UnitSystem.METRIC)
+    assert val == 200.0
+    assert unit == "bar"
+
+
+def test_display_pressure_imperial() -> None:
+    val, unit = display_pressure(200.0, UnitSystem.IMPERIAL)
+    assert val == pytest.approx(2900.7548, abs=1e-2)
+    assert unit == "psi"
+
+
+def test_display_pressure_none_preserves_unit_label() -> None:
+    val, unit = display_pressure(None, UnitSystem.IMPERIAL)
+    assert val is None
+    assert unit == "psi"
+
+
+def test_pressure_unit_label() -> None:
+    assert pressure_unit_label(UnitSystem.METRIC) == "bar"
+    assert pressure_unit_label(UnitSystem.IMPERIAL) == "psi"

@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from open_dive_log.repositories import buddies, dives, sites as sites_repo
-from open_dive_log.units import UnitSystem, display_distance, display_temp
+from open_dive_log.units import UnitSystem, display_distance, display_pressure, display_temp
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +47,7 @@ def assemble_dive_detail(conn: sqlite3.Connection, dive_id: int) -> dict[str, An
             d.entry_notes, d.surface_conditions_notes, d.notes,
             d.max_depth_m, d.avg_depth_m,
             d.air_temp_c, d.water_temp_c, d.visibility_m,
+            d.start_pressure_bar, d.end_pressure_bar,
             d.o2_percentage, d.mix_notes, d.gear_notes,
             d.created_at, d.updated_at,
             tod.name        AS time_of_day,
@@ -99,6 +100,9 @@ def assemble_dive_detail(conn: sqlite3.Connection, dive_id: int) -> dict[str, An
         "Air temp (C)": row["air_temp_c"],
         "Water temp (C)": row["water_temp_c"],
         "Visibility (m)": row["visibility_m"],
+        # tank pressure (metric in DB — formatted by caller)
+        "Start pressure (bar)": row["start_pressure_bar"],
+        "End pressure (bar)": row["end_pressure_bar"],
         # gas
         "Equipment": row["equipment_type"],
         "Tank type": row["tank_type"],
@@ -133,6 +137,15 @@ def _fmt(value: Any) -> str:
 def _fmt_temp(c: float | None, system: UnitSystem) -> str:
     """Format a stored °C temperature for the user's chosen unit system."""
     val, unit = display_temp(c, system)
+    if val is None:
+        return "—"
+    if isinstance(val, float) and val == int(val):
+        return f"{int(val)} {unit}"
+    return f"{val:.1f} {unit}"
+
+
+def _fmt_pressure(bar: float | None, system: UnitSystem) -> str:
+    val, unit = display_pressure(bar, system)
     if val is None:
         return "—"
     if isinstance(val, float) and val == int(val):
@@ -195,6 +208,9 @@ class DiveDetailDialog(QDialog):
         ], data))
         body_layout.addWidget(self._build_section("Conditions", [
             "Air temp (C)", "Water temp (C)", "Visibility (m)",
+        ], data))
+        body_layout.addWidget(self._build_section("Tank pressure", [
+            "Start pressure (bar)", "End pressure (bar)",
         ], data))
         body_layout.addWidget(self._build_section("Equipment & gas", [
             "Equipment", "Tank type", "Tank configuration", "Gas type",
@@ -273,6 +289,10 @@ def _format_key(key: str, data: dict[str, Any], units: UnitSystem) -> str:
         return _fmt_temp(data.get("Water temp (C)"), units)
     if key == "Visibility (m)":
         return _fmt_distance(data.get("Visibility (m)"), units)
+    if key == "Start pressure (bar)":
+        return _fmt_pressure(data.get("Start pressure (bar)"), units)
+    if key == "End pressure (bar)":
+        return _fmt_pressure(data.get("End pressure (bar)"), units)
     return _fmt(data.get(key))
 
 

@@ -56,6 +56,7 @@ from open_dive_log.units import (
     f_to_c,
     ft_to_m,
     m_to_ft,
+    psi_to_bar,
 )
 
 
@@ -104,6 +105,9 @@ class SubmittedDive:
     air_temp_c: float | None
     water_temp_c: float | None
     visibility_m: float | None
+    # tank pressure (stored in BAR)
+    start_pressure_bar: float | None
+    end_pressure_bar: float | None
     # equipment
     equipment_type_id: int | None
     tank_type_id: int | None
@@ -136,6 +140,8 @@ class SubmittedDive:
             "air_temp_c": self.air_temp_c,
             "water_temp_c": self.water_temp_c,
             "visibility_m": self.visibility_m,
+            "start_pressure_bar": self.start_pressure_bar,
+            "end_pressure_bar": self.end_pressure_bar,
             "equipment_type_id": self.equipment_type_id,
             "tank_type_id": self.tank_type_id,
             "tank_configuration_id": self.tank_configuration_id,
@@ -193,6 +199,7 @@ class DiveAddEditDialog(QDialog):
         body_layout.addWidget(self._build_surface_section(dive))
         body_layout.addWidget(self._build_depth_section(dive))
         body_layout.addWidget(self._build_conditions_section(dive))
+        body_layout.addWidget(self._build_pressure_section(dive))
         body_layout.addWidget(self._build_equipment_section(dive))
         body_layout.addWidget(self._build_sites_section(dive))
         body_layout.addWidget(self._build_buddies_section(dive))
@@ -354,6 +361,35 @@ class DiveAddEditDialog(QDialog):
             display = m_to_ft(dive.visibility_m) if self._units == UnitSystem.IMPERIAL else dive.visibility_m
             self._visibility.setValue(display)
         form.addRow(f"Visibility ({self._distance_unit()}):", self._visibility)
+
+        v.addLayout(form)
+        return container
+
+    def _build_pressure_section(self, dive: dives.DiveFull | None) -> QWidget:
+        """Tank pressure (start of dive, end of dive). Stored in BAR;
+        displayed in BAR or PSI depending on the unit toggle. Unlike
+        temperature and visibility, 0 is a valid (and common) value
+        here — 0 BAR = empty tank. So the form does NOT treat 0 as None.
+        """
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self._header("Tank pressure"))
+        form = QFormLayout()
+
+        # Start pressure
+        self._start_pressure = self._make_pressure_spin()
+        if dive and dive.start_pressure_bar is not None:
+            display = self._to_pressure_display(dive.start_pressure_bar)
+            self._start_pressure.setValue(display)
+        form.addRow(f"Start ({self._pressure_unit()}):", self._start_pressure)
+
+        # End pressure
+        self._end_pressure = self._make_pressure_spin()
+        if dive and dive.end_pressure_bar is not None:
+            display = self._to_pressure_display(dive.end_pressure_bar)
+            self._end_pressure.setValue(display)
+        form.addRow(f"End ({self._pressure_unit()}):", self._end_pressure)
 
         v.addLayout(form)
         return container
@@ -587,11 +623,38 @@ class DiveAddEditDialog(QDialog):
         s.setSuffix(f" {self._temp_unit()}")
         return s
 
+    def _make_pressure_spin(self) -> QDoubleSpinBox:
+        s = QDoubleSpinBox()
+        # Range is wide enough for both BAR and PSI display. The upper
+        # bound is comfortably above 350 BAR / 5076 PSI (the migration's
+        # CHECK constraint), and the lower bound is 0 (an empty tank).
+        s.setRange(0.0, 9999.0)
+        s.setDecimals(1)
+        s.setSuffix(f" {self._pressure_unit()}")
+        return s
+
+    def _to_pressure_display(self, bar: float) -> float:
+        """Convert a stored BAR value for display in the user's chosen unit."""
+        if self._units == UnitSystem.IMPERIAL:
+            return bar * 14.5037738
+        return bar
+
+    def _from_pressure_display(self, displayed: float) -> float | None:
+        """Convert a display value back to BAR for storage. Returns
+        None if the user cleared the field (which QDoubleSpinBox reports
+        as 0 — see the save handler for how this is treated)."""
+        if self._units == UnitSystem.IMPERIAL:
+            return psi_to_bar(displayed)
+        return displayed
+
     def _temp_unit(self) -> str:
         return "°F" if self._units == UnitSystem.IMPERIAL else "°C"
 
     def _distance_unit(self) -> str:
         return "ft" if self._units == UnitSystem.IMPERIAL else "m"
+
+    def _pressure_unit(self) -> str:
+        return "psi" if self._units == UnitSystem.IMPERIAL else "bar"
 
     # ------------------------------------------------------------------
     # Sites picker: refresh, add, remove, reorder, create inline
@@ -756,12 +819,19 @@ class DiveAddEditDialog(QDialog):
             air_temp = f_to_c(self._air_temp.value()) if self._air_temp.value() != 0 else None
             water_temp = f_to_c(self._water_temp.value()) if self._water_temp.value() != 0 else None
             visibility = ft_to_m(self._visibility.value()) or None
+            start_pressure = self._from_pressure_display(self._start_pressure.value())
+            end_pressure = self._from_pressure_display(self._end_pressure.value())
         else:
             max_depth = self._max_depth.value() or None
             avg_depth = self._avg_depth.value() or None
             air_temp = self._air_temp.value() if self._air_temp.value() != 0 else None
             water_temp = self._water_temp.value() if self._water_temp.value() != 0 else None
             visibility = self._visibility.value() or None
+            start_pressure = self._start_pressure.value() or None
+            end_pressure = self._end_pressure.value() or None
+        # Pressure is a real value (0 BAR = empty tank), so we do NOT
+        # coerce 0 to None. The form just keeps 0 as 0. Users who want
+        # to clear can set it to a sentinel (e.g. 0) explicitly.
         run_time = self._run_time.value() or None
         o2 = self._o2.value() or None
 
@@ -794,6 +864,8 @@ class DiveAddEditDialog(QDialog):
             air_temp_c=air_temp,
             water_temp_c=water_temp,
             visibility_m=visibility,
+            start_pressure_bar=start_pressure,
+            end_pressure_bar=end_pressure,
             equipment_type_id=_lookup_id(self._equipment_type),
             tank_type_id=_lookup_id(self._tank_type),
             tank_configuration_id=_lookup_id(self._tank_config),

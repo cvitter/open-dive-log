@@ -55,6 +55,9 @@ class DiveFull:
     air_temp_c: float | None
     water_temp_c: float | None
     visibility_m: float | None
+    # tank pressure (stored in BAR)
+    start_pressure_bar: float | None
+    end_pressure_bar: float | None
     # equipment
     equipment_type_id: int | None
     tank_type_id: int | None
@@ -92,6 +95,8 @@ def create(
     air_temp_c: float | None = None,
     water_temp_c: float | None = None,
     visibility_m: float | None = None,
+    start_pressure_bar: float | None = None,
+    end_pressure_bar: float | None = None,
     equipment_type_id: int | None = None,
     tank_type_id: int | None = None,
     tank_configuration_id: int | None = None,
@@ -112,6 +117,7 @@ def create(
             run_time_minutes,
             max_depth_m, avg_depth_m,
             air_temp_c, water_temp_c, visibility_m,
+            start_pressure_bar, end_pressure_bar,
             equipment_type_id, tank_type_id, tank_configuration_id, gas_type_id,
             o2_percentage, mix_notes, gear_notes,
             purpose_id, notes
@@ -122,6 +128,7 @@ def create(
             ?,
             ?, ?,
             ?, ?, ?,
+            ?, ?,
             ?, ?, ?, ?,
             ?, ?, ?,
             ?, ?
@@ -134,6 +141,7 @@ def create(
             run_time_minutes,
             max_depth_m, avg_depth_m,
             air_temp_c, water_temp_c, visibility_m,
+            start_pressure_bar, end_pressure_bar,
             equipment_type_id, tank_type_id, tank_configuration_id, gas_type_id,
             o2_percentage, mix_notes, gear_notes,
             purpose_id, notes,
@@ -295,9 +303,12 @@ def list_recent_with_sites(
             "end_time": str | None,
             "dive_time_minutes": int | None,
             "max_depth_m": float | None,
+            "avg_depth_m": float | None,
             "air_temp_c": float | None,
             "water_temp_c": float | None,
             "visibility_m": float | None,
+            "start_pressure_bar": float | None,
+            "end_pressure_bar": float | None,
             "sites": str,         # "Salt Pier, Karpata" or "" if none
         }
     """
@@ -305,8 +316,9 @@ def list_recent_with_sites(
         """
         SELECT
             d.id, d.dive_date, d.start_time, d.end_time,
-            d.dive_time_minutes, d.max_depth_m,
+            d.dive_time_minutes, d.max_depth_m, d.avg_depth_m,
             d.air_temp_c, d.water_temp_c, d.visibility_m,
+            d.start_pressure_bar, d.end_pressure_bar,
             GROUP_CONCAT(s.name, ', ') AS sites
         FROM dive d
         LEFT JOIN dive_site ds ON ds.dive_id = d.id
@@ -325,9 +337,12 @@ def list_recent_with_sites(
             "end_time": r["end_time"],
             "dive_time_minutes": r["dive_time_minutes"],
             "max_depth_m": r["max_depth_m"],
+            "avg_depth_m": r["avg_depth_m"],
             "air_temp_c": r["air_temp_c"],
             "water_temp_c": r["water_temp_c"],
             "visibility_m": r["visibility_m"],
+            "start_pressure_bar": r["start_pressure_bar"],
+            "end_pressure_bar": r["end_pressure_bar"],
             "sites": r["sites"] or "",
         }
         for r in rows
@@ -343,6 +358,7 @@ _FULL_COLS = (
     "surface_conditions_id, surface_conditions_notes, run_time_minutes, "
     "max_depth_m, avg_depth_m, "
     "air_temp_c, water_temp_c, visibility_m, "
+    "start_pressure_bar, end_pressure_bar, "
     "equipment_type_id, tank_type_id, tank_configuration_id, gas_type_id, "
     "o2_percentage, mix_notes, gear_notes, "
     "purpose_id, notes, "
@@ -373,6 +389,8 @@ def get_full(conn: sqlite3.Connection, dive_id: int) -> DiveFull | None:
         air_temp_c=row["air_temp_c"],
         water_temp_c=row["water_temp_c"],
         visibility_m=row["visibility_m"],
+        start_pressure_bar=row["start_pressure_bar"],
+        end_pressure_bar=row["end_pressure_bar"],
         equipment_type_id=row["equipment_type_id"],
         tank_type_id=row["tank_type_id"],
         tank_configuration_id=row["tank_configuration_id"],
@@ -406,6 +424,8 @@ def update(
     air_temp_c: float | None = None,
     water_temp_c: float | None = None,
     visibility_m: float | None = None,
+    start_pressure_bar: float | None = None,
+    end_pressure_bar: float | None = None,
     equipment_type_id: int | None = None,
     tank_type_id: int | None = None,
     tank_configuration_id: int | None = None,
@@ -431,6 +451,7 @@ def update(
             run_time_minutes = ?,
             max_depth_m = ?, avg_depth_m = ?,
             air_temp_c = ?, water_temp_c = ?, visibility_m = ?,
+            start_pressure_bar = ?, end_pressure_bar = ?,
             equipment_type_id = ?, tank_type_id = ?,
             tank_configuration_id = ?, gas_type_id = ?,
             o2_percentage = ?, mix_notes = ?, gear_notes = ?,
@@ -445,6 +466,7 @@ def update(
             run_time_minutes,
             max_depth_m, avg_depth_m,
             air_temp_c, water_temp_c, visibility_m,
+            start_pressure_bar, end_pressure_bar,
             equipment_type_id, tank_type_id,
             tank_configuration_id, gas_type_id,
             o2_percentage, mix_notes, gear_notes,

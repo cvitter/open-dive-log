@@ -237,6 +237,7 @@ def test_submitted_dive_to_kwargs_round_trips() -> None:
         surface_conditions_id=None, surface_conditions_notes=None, run_time_minutes=10,
         max_depth_m=24.0, avg_depth_m=18.0,
         air_temp_c=28.0, water_temp_c=27.0, visibility_m=20.0,
+        start_pressure_bar=200.0, end_pressure_bar=80.0,
         equipment_type_id=None, tank_type_id=None, tank_configuration_id=None,
         gas_type_id=None, o2_percentage=32.0, mix_notes=None, gear_notes=None,
         purpose_id=None, notes="Great viz",
@@ -249,9 +250,88 @@ def test_submitted_dive_to_kwargs_round_trips() -> None:
     assert kw["dive_date"] == "2026-06-15"
     assert kw["max_depth_m"] == 24.0
     assert kw["o2_percentage"] == 32.0
-    # New conditions fields (migration 005) must round-trip through to_kwargs
+    # Conditions fields (migration 005) must round-trip through to_kwargs
     assert kw["air_temp_c"] == 28.0
     assert kw["water_temp_c"] == 27.0
     assert kw["visibility_m"] == 20.0
+    # Pressure fields (migration 006) must round-trip through to_kwargs
+    assert kw["start_pressure_bar"] == 200.0
+    assert kw["end_pressure_bar"] == 80.0
     assert sub.site_ids == [1, 2]
     assert sub.buddy_entries == [(3, 4)]
+
+
+# ---------------------------------------------------------------------------
+# Pressure fields (migration 006)
+# ---------------------------------------------------------------------------
+def test_create_with_pressure_persists(conn: sqlite3.Connection) -> None:
+    did = dives.create(
+        conn, dive_date="2026-06-15",
+        start_pressure_bar=200.0, end_pressure_bar=80.0,
+    )
+    full = dives.get_full(conn, did)
+    assert full is not None
+    assert full.start_pressure_bar == 200.0
+    assert full.end_pressure_bar == 80.0
+
+
+def test_create_with_null_pressure(conn: sqlite3.Connection) -> None:
+    """Pressure is optional; passing nothing leaves both columns NULL."""
+    did = dives.create(conn, dive_date="2026-06-15")
+    full = dives.get_full(conn, did)
+    assert full is not None
+    assert full.start_pressure_bar is None
+    assert full.end_pressure_bar is None
+
+
+def test_update_pressure_persists(conn: sqlite3.Connection) -> None:
+    did = dives.create(conn, dive_date="2026-06-15", start_pressure_bar=200.0)
+    dives.update(
+        conn, did, dive_date="2026-06-15",
+        start_pressure_bar=210.0, end_pressure_bar=90.0,
+    )
+    full = dives.get_full(conn, did)
+    assert full is not None
+    assert full.start_pressure_bar == 210.0
+    assert full.end_pressure_bar == 90.0
+
+
+def test_zero_pressure_is_a_real_value(conn: sqlite3.Connection) -> None:
+    """0 BAR (empty tank) is a real reading, not 'not entered'.
+    The repository must preserve it; only the form-level coercion
+    rules differ (and the form does NOT coerce pressure 0 to None).
+    """
+    did = dives.create(
+        conn, dive_date="2026-06-15",
+        start_pressure_bar=0.0, end_pressure_bar=0.0,
+    )
+    full = dives.get_full(conn, did)
+    assert full is not None
+    assert full.start_pressure_bar == 0.0
+    assert full.end_pressure_bar == 0.0
+
+
+def test_pressure_range_check_rejects_out_of_range(conn: sqlite3.Connection) -> None:
+    """Migration 006 added CHECK 0..350 BAR; the form also enforces it."""
+    import sqlite3 as _sq
+    with pytest.raises(_sq.IntegrityError):
+        dives.create(conn, dive_date="2026-06-15", start_pressure_bar=500.0)
+    with pytest.raises(_sq.IntegrityError):
+        dives.create(conn, dive_date="2026-06-15", end_pressure_bar=-10.0)
+
+
+def test_list_recent_with_sites_includes_pressure_and_avg_depth(
+    conn: sqlite3.Connection,
+) -> None:
+    did = dives.create(
+        conn, dive_date="2026-06-15",
+        max_depth_m=24.0, avg_depth_m=18.0,
+        start_pressure_bar=200.0, end_pressure_bar=80.0,
+    )
+    rows = dives.list_recent_with_sites(conn)
+    assert len(rows) == 1
+    assert rows[0]["id"] == did
+    assert rows[0]["max_depth_m"] == 24.0
+    assert rows[0]["avg_depth_m"] == 18.0
+    assert rows[0]["start_pressure_bar"] == 200.0
+    assert rows[0]["end_pressure_bar"] == 80.0

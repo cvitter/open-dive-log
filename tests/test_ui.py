@@ -106,6 +106,101 @@ def test_format_depth() -> None:
     assert _format_depth(None, imperial) == ""
 
 
+def test_format_pressure_metric() -> None:
+    from open_dive_log.ui.dive_table_model import _format_pressure
+    from open_dive_log.units import UnitSystem
+    assert _format_pressure(None, UnitSystem.METRIC) == ""
+    assert _format_pressure(200.0, UnitSystem.METRIC) == "200 bar"
+    assert _format_pressure(195.5, UnitSystem.METRIC) == "195.5 bar"
+    # 0 is a real value (empty tank), not "not entered"
+    assert _format_pressure(0.0, UnitSystem.METRIC) == "0 bar"
+
+
+def test_format_pressure_imperial() -> None:
+    from open_dive_log.ui.dive_table_model import _format_pressure
+    from open_dive_log.units import UnitSystem
+    # 200 BAR ≈ 2900.75 PSI
+    assert _format_pressure(200.0, UnitSystem.IMPERIAL) == "2900.8 psi"
+    # 232 BAR (high-pressure) ≈ 3364.9 PSI
+    assert _format_pressure(232.0, UnitSystem.IMPERIAL) == "3364.9 psi"
+    assert _format_pressure(0.0, UnitSystem.IMPERIAL) == "0 psi"
+    assert _format_pressure(None, UnitSystem.IMPERIAL) == ""
+
+
+def test_table_model_has_ten_columns() -> None:
+    """The user's spec is 9 columns (Dive#/date/air temp/water temp/
+    visibility/pressure start/pressure end/depth avg/depth max); we
+    added Site as the 10th. Verify both the count and the column
+    constants in order.
+    """
+    from open_dive_log.ui.dive_table_model import (
+        COL_DIVE_NUM, COL_DATE, COL_AIR_TEMP, COL_WATER_TEMP, COL_VISIBILITY,
+        COL_PRESSURE_START, COL_PRESSURE_END, COL_DEPTH_AVG, COL_DEPTH_MAX,
+        COL_SITE, NUM_COLS,
+    )
+    assert NUM_COLS == 10
+    # Order matters: dive#/date/air temp/water temp/visibility/pressure
+    # start/pressure end/depth avg/depth max/site
+    assert (COL_DIVE_NUM, COL_DATE, COL_AIR_TEMP, COL_WATER_TEMP, COL_VISIBILITY,
+            COL_PRESSURE_START, COL_PRESSURE_END, COL_DEPTH_AVG, COL_DEPTH_MAX,
+            COL_SITE) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+
+
+def test_table_model_headers_metric() -> None:
+    from open_dive_log.ui.dive_table_model import _build_headers
+    from open_dive_log.units import UnitSystem
+    headers = _build_headers(UnitSystem.METRIC)
+    labels = [h[0] for h in headers]
+    assert labels == [
+        "Dive #", "Date", "Air temp (°C)", "Water temp (°C)",
+        "Visibility (m)", "P start (bar)", "P end (bar)",
+        "Depth avg (m)", "Depth max (m)", "Site",
+    ]
+
+
+def test_table_model_headers_imperial() -> None:
+    from open_dive_log.ui.dive_table_model import _build_headers
+    from open_dive_log.units import UnitSystem
+    headers = _build_headers(UnitSystem.IMPERIAL)
+    labels = [h[0] for h in headers]
+    assert labels == [
+        "Dive #", "Date", "Air temp (°F)", "Water temp (°F)",
+        "Visibility (ft)", "P start (psi)", "P end (psi)",
+        "Depth avg (ft)", "Depth max (ft)", "Site",
+    ]
+
+
+def test_load_rows_includes_pressure_and_avg_depth(tmp_path: Path) -> None:
+    """The DiveRow dataclass must carry all 10 columns' data from the DB.
+
+    Uses an isolated connection (not the shared `conn` fixture) so we
+    can assert an exact row count.
+    """
+    from open_dive_log.ui.dive_table_model import load_rows
+    cm = db.connect(tmp_path / "load_rows_pressure.db")
+    c = cm.__enter__()
+    db.apply_migrations(c)
+    try:
+        did = dives.create(
+            c, dive_date="2026-06-15",
+            max_depth_m=24.0, avg_depth_m=18.0,
+            air_temp_c=28.0, water_temp_c=27.0, visibility_m=20.0,
+            start_pressure_bar=200.0, end_pressure_bar=80.0,
+        )
+        rows = load_rows(c)
+        assert len(rows) == 1
+        assert rows[0].id == did
+        assert rows[0].max_depth_m == 24.0
+        assert rows[0].avg_depth_m == 18.0
+        assert rows[0].air_temp_c == 28.0
+        assert rows[0].water_temp_c == 27.0
+        assert rows[0].visibility_m == 20.0
+        assert rows[0].start_pressure_bar == 200.0
+        assert rows[0].end_pressure_bar == 80.0
+    finally:
+        cm.__exit__(None, None, None)
+
+
 # ---------------------------------------------------------------------------
 # dive_detail_dialog.assemble_dive_detail — pure Python
 # ---------------------------------------------------------------------------
