@@ -34,7 +34,11 @@ from open_dive_log.repositories import certifications, lookups
 
 @dataclass(frozen=True, slots=True)
 class SubmittedCert:
-    """What the dialog hands back to the caller when the user clicks Save."""
+    """What the dialog hands back to the caller when the user clicks Save.
+
+    `slots=True` means instances don't have a `__dict__`, so we expose
+    `to_kwargs()` for the repository call (instead of `**self.__dict__`).
+    """
     cert_date: str
     cert_name: str
     cert_number: str
@@ -42,6 +46,17 @@ class SubmittedCert:
     certifying_facility: str | None
     instructor: str | None
     notes: str | None
+
+    def to_kwargs(self) -> dict[str, object]:
+        return {
+            "cert_date": self.cert_date,
+            "cert_name": self.cert_name,
+            "cert_number": self.cert_number,
+            "certifying_agency_id": self.certifying_agency_id,
+            "certifying_facility": self.certifying_facility,
+            "instructor": self.instructor,
+            "notes": self.notes,
+        }
 
 
 class CertAddEditDialog(QDialog):

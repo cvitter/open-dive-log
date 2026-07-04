@@ -365,3 +365,55 @@ def test_qt_cert_add_dialog_constructs() -> None:
         print('OK: cert add dialog constructed')
         """
     )
+
+
+def test_qt_cert_add_edit_round_trip() -> None:
+    """End-to-end: construct add dialog, simulate Save, verify create + edit
+    via to_kwargs() actually round-trips through the repository. This is the
+    regression test for the slots=True + **self.__dict__ bug.
+    """
+    _subprocess_qt_check(
+        """
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.repositories import certifications, lookups
+        from open_dive_log.ui.cert_add_edit_dialog import CertAddEditDialog, SubmittedCert
+
+        cm = connect(':memory:')
+        conn = cm.__enter__()
+        apply_migrations(conn)
+        padi = lookups.list_active(conn, 'lookup_certifying_agency')[0]
+
+        # Path 1: create via SubmittedCert.to_kwargs() (this is what the
+        # add dialog will hand to cert_list_window on Save).
+        dlg = CertAddEditDialog(conn, cert=None)
+        sub = SubmittedCert(
+            cert_date='2026-06-15', cert_name='Open Water',
+            cert_number='PADI-1', certifying_agency_id=padi.id,
+            certifying_facility='Blue Water', instructor='J. Smith', notes='Day 1',
+        )
+        new_id = certifications.create(conn, **sub.to_kwargs())
+        cert = certifications.get(conn, new_id)
+        assert cert is not None
+        assert cert.cert_name == 'Open Water'
+        assert cert.certifying_agency_name == 'PADI'
+        assert cert.certifying_facility == 'Blue Water'
+        dlg.close()
+
+        # Path 2: edit + update via the same to_kwargs() mechanism.
+        dlg2 = CertAddEditDialog(conn, cert=cert)
+        assert dlg2._name.text() == 'Open Water'
+        assert dlg2._facility.text() == 'Blue Water'
+        sub2 = SubmittedCert(
+            cert_date='2026-08-20', cert_name='Advanced Open Water',
+            cert_number='PADI-2', certifying_agency_id=padi.id,
+            certifying_facility='Blue Water', instructor='J. Smith', notes='Updated',
+        )
+        certifications.update(conn, cert.id, **sub2.to_kwargs())
+        updated = certifications.get(conn, cert.id)
+        assert updated.cert_name == 'Advanced Open Water'
+        assert updated.cert_date == '2026-08-20'
+        dlg2.close()
+        cm.__exit__(None, None, None)
+        print('OK: cert add + edit round-trip via to_kwargs()')
+        """
+    )

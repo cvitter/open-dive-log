@@ -257,7 +257,7 @@ class CertListWindow(QMainWindow):
         submitted = dlg.result_cert()
         if submitted is None:
             return
-        new_id = certifications.create(self._conn, **submitted.__dict__)
+        new_id = certifications.create(self._conn, **submitted.to_kwargs())
         self.refresh()
         # Highlight the new row for visual feedback.
         for r in range(self._model.rowCount()):
@@ -277,7 +277,7 @@ class CertListWindow(QMainWindow):
         submitted = dlg.result_cert()
         if submitted is None:
             return
-        certifications.update(self._conn, cert.id, **submitted.__dict__)
+        certifications.update(self._conn, cert.id, **submitted.to_kwargs())
         self.refresh()
         self.statusBar().showMessage(f"Updated certification #{cert.id}", 5000)
 
