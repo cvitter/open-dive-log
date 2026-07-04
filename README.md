@@ -17,10 +17,15 @@ placeholders — read-only view for now.
 ## Run
 
 ```bash
-.venv/bin/python -m open_dive_log                   # the GUI
-.venv/bin/python -m open_dive_log.import_opendivemap  # the importer
-.venv/bin/python -m pytest                           # 42 tests
+PYTHONPATH=src .venv/bin/python3.14 -m open_dive_log          # the GUI
+.venv/bin/python -m open_dive_log.import_opendivemap          # the importer
+.venv/bin/python -m pytest                                    # 42 tests
 ```
+
+The `PYTHONPATH=src` prefix works around a Python 3.14 + editable-install
+quirk where `.pth` files aren't processed when `PYTHONPATH` is set in the
+environment. The console script at `.venv/bin/open-dive-log` already
+contains the same workaround and can be used directly.
 
 ## GUI
 
