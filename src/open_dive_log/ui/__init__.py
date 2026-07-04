@@ -5,12 +5,16 @@ data. Each module takes a sqlite3 connection (or a "connection factory")
 so test code can wire it up against a temp DB without booting Qt.
 """
 
+from .cert_add_edit_dialog import CertAddEditDialog
+from .cert_list_window import CertListWindow
 from .dive_detail_dialog import DiveDetailDialog
 from .dive_table_model import DiveTableModel
 from .main_window import MainWindow
 from .sites_list_window import SitesListWindow
 
 __all__ = [
+    "CertAddEditDialog",
+    "CertListWindow",
     "DiveDetailDialog",
     "DiveTableModel",
     "MainWindow",

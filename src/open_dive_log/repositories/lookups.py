@@ -22,6 +22,7 @@ LOOKUP_TABLES: tuple[str, ...] = (
     "lookup_buddy_role",
     "lookup_site_environment",
     "lookup_site_topology",
+    "lookup_certifying_agency",
 )
 
 

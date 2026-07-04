@@ -2,17 +2,18 @@
 
 Layout:
     QMainWindow
-    ├── menu bar:  Dives / Sites / Lookups / Help
+    ├── menu bar:  Dives / Sites / Certifications / Lookups / Help
     ├── central:   QTableView bound to DiveTableModel (the dive list)
     └── status bar
 
 Menus:
-    Dives:    New Dive (disabled), Edit Dive (disabled), Delete Dive (disabled),
-              List Dives, ---, Quit
-    Sites:    List Sites, ---, Import from opendivemap, ---,
-              New Site (disabled), Edit Site (disabled), Delete Site (disabled)
-    Lookups:  Manage Lookups (disabled — coming soon)
-    Help:     About Open Dive Log
+    Dives:          New Dive (disabled), Edit Dive (disabled), Delete Dive (disabled),
+                    List Dives, ---, Quit
+    Sites:          List Sites, ---, Import from opendivemap, ---,
+                    New Site (disabled), Edit Site (disabled), Delete Site (disabled)
+    Certifications: List Certifications… (opens the certs list window)
+    Lookups:        Manage Lookups (disabled — coming soon)
+    Help:           About Open Dive Log
 
 Double-clicking a row in the table opens a read-only DiveDetailDialog.
 """
@@ -35,6 +36,8 @@ from PySide6.QtWidgets import (
 
 from open_dive_log import __version__, import_opendivemap
 from open_dive_log.db import get_default_db_path, get_sqlite_version
+from open_dive_log.ui.cert_add_edit_dialog import CertAddEditDialog  # noqa: F401
+from open_dive_log.ui.cert_list_window import CertListWindow
 from open_dive_log.ui.dive_detail_dialog import DiveDetailDialog
 from open_dive_log.ui.dive_table_model import DiveTableModel, load_rows
 from open_dive_log.ui.sites_list_window import SitesListWindow
@@ -117,6 +120,7 @@ class MainWindow(QMainWindow):
 
         # --- Child windows we keep references to (so they don't get GC'd) -
         self._sites_window: SitesListWindow | None = None
+        self._certs_window: CertListWindow | None = None
 
         # Initial population.
         self._refresh_dive_list()
@@ -181,6 +185,13 @@ class MainWindow(QMainWindow):
         self._action_delete_site.setEnabled(False)
         sites_menu.addAction(self._action_delete_site)
 
+        # --- Certifications ---
+        certs_menu = bar.addMenu("&Certifications")
+        action_list_certs = QAction("&List Certifications…", self)
+        action_list_certs.setShortcut(QKeySequence("Ctrl+Shift+C"))
+        action_list_certs.triggered.connect(self._open_certs_window)
+        certs_menu.addAction(action_list_certs)
+
         # --- Lookups (placeholder) ---
         lookups_menu = bar.addMenu("&Lookups")
         action_manage_lookups = QAction("&Manage Lookups…", self)
@@ -222,6 +233,13 @@ class MainWindow(QMainWindow):
         self._sites_window.show()
         self._sites_window.raise_()
         self._sites_window.activateWindow()
+
+    def _open_certs_window(self) -> None:
+        if self._certs_window is None:
+            self._certs_window = CertListWindow(self._conn, parent=self)
+        self._certs_window.show()
+        self._certs_window.raise_()
+        self._certs_window.activateWindow()
 
     def _start_opendivemap_import(self) -> None:
         # Confirm first — the import takes a couple of minutes.

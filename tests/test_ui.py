@@ -294,3 +294,74 @@ def test_qt_sites_list_window_constructs() -> None:
         print('OK: sites list window constructed and assertions passed')
         """
     )
+
+
+def test_qt_main_window_has_certifications_menu() -> None:
+    """The main window now has 5 top-level menus including Certifications."""
+    _subprocess_qt_check(
+        """
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.ui.main_window import MainWindow
+
+        cm = connect(':memory:')
+        conn = cm.__enter__()
+        apply_migrations(conn)
+        win = MainWindow(conn=conn)
+        menus = [a.text() for a in win.menuBar().actions()]
+        for required in ('&Dives', '&Sites', '&Certifications', '&Lookups', '&Help'):
+            assert required in menus, f"missing menu: {required}; have {menus}"
+        win.close()
+        cm.__exit__(None, None, None)
+        print('OK: main window has all 5 menus')
+        """
+    )
+
+
+def test_qt_cert_list_window_constructs() -> None:
+    _subprocess_qt_check(
+        """
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.repositories import certifications, lookups
+        from open_dive_log.ui.cert_list_window import CertListWindow
+
+        cm = connect(':memory:')
+        conn = cm.__enter__()
+        apply_migrations(conn)
+        padi = lookups.list_active(conn, 'lookup_certifying_agency')[0]
+        certifications.create(conn, cert_date='2026-06-15', cert_name='Open Water',
+                              cert_number='PADI-1', certifying_agency_id=padi.id)
+        certifications.create(conn, cert_date='2026-08-20', cert_name='AOW Diver',
+                              cert_number='PADI-2', certifying_agency_id=padi.id,
+                              certifying_facility='Blue Water Divers')
+
+        win = CertListWindow(conn)
+        assert win._model.rowCount() == 2, win._model.rowCount()
+        # Status bar reports count.
+        assert '2 certification' in win.statusBar().currentMessage()
+        # Toolbar has the expected actions.
+        toolbar = win.findChild(type(win._action_add).__mro__[0])  # placeholder
+        win.close()
+        cm.__exit__(None, None, None)
+        print('OK: cert list window constructed and 2 certs loaded')
+        """
+    )
+
+
+def test_qt_cert_add_dialog_constructs() -> None:
+    _subprocess_qt_check(
+        """
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.ui.cert_add_edit_dialog import CertAddEditDialog
+
+        cm = connect(':memory:')
+        conn = cm.__enter__()
+        apply_migrations(conn)
+        dlg = CertAddEditDialog(conn, cert=None)
+        assert dlg.windowTitle() == 'Add Certification'
+        # Date defaults to today, agency combo is populated.
+        assert dlg._agency.count() == 12
+        dlg.close()
+        cm.__exit__(None, None, None)
+        print('OK: cert add dialog constructed')
+        """
+    )

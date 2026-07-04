@@ -10,8 +10,8 @@ placeholders — read-only view for now.
 
 ## Tech stack
 
-- Python 3.13 (was 3.14 — switched because PySide6 6.11.1's Cocoa plugin doesn't load on macOS arm64 under 3.14; 3.13 works)
-- PySide6 6.8+ (Qt 6 GUI; 6.11.1 verified)
+- Python 3.13
+- PySide6 6.8+ (Qt 6 GUI; 6.8.3 verified — 6.11.x ships a Cocoa plugin that Qt's plugin loader can't load on macOS arm64)
 - SQLite 3.53.x (Python's bundled `sqlite3` module)
 
 ## Run
@@ -44,11 +44,19 @@ Menus:
 
 * **Dives** — New/Edit/Delete (placeholders, coming soon), List Dives, Quit
 * **Sites** — List Sites, Import from opendivemap, New/Edit/Delete (placeholders)
+* **Certifications** — List Certifications… (opens the certs list window with add / edit / delete / print)
 * **Lookups** — Manage Lookups (placeholder)
 * **Help** — About
 
 The opendivemap import runs on a background `QThread` so the UI stays
 responsive; a confirmation dialog shows the final counts when it finishes.
+
+The Certifications window supports adding, editing, and deleting dive
+certifications. "Print Selected" and "Print All" use Qt's
+`QTextDocument` + `QPrinter` pipeline (standard macOS print sheet, with
+PDF export as a freebie). The cert "card" is rendered as HTML
+(centered title, structured key-value table, optional notes, and a
+"Generated from Open Dive Log" footer).
 
 ## Schema
 
@@ -64,7 +72,8 @@ topology, environment, and the external-id plumbing. Migration 003 added
 bag.
 
 The full DDL is in `src/open_dive_log/migrations/001_init.sql`,
-`002_opendivemap.sql`, and `003_site_descriptions.sql`.
+`002_opendivemap.sql`, `003_site_descriptions.sql`, and
+`004_certifications.sql`.
 
 ## Setup from scratch
 

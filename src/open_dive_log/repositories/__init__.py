@@ -4,6 +4,6 @@ Each repository takes a `sqlite3.Connection` so the app layer can compose
 operations across repos inside a single transaction.
 """
 
-from . import buddies, dives, lookups, sites
+from . import buddies, certifications, dives, lookups, sites
 
-__all__ = ["buddies", "dives", "lookups", "sites"]
+__all__ = ["buddies", "certifications", "dives", "lookups", "sites"]
