@@ -33,6 +33,8 @@ class Site:
     entry_id: int | None
     entry_name: str | None
     max_depth_m: float | None
+    description: str | None
+    description_wildlife: str | None
     notes: str | None
 
 
@@ -58,7 +60,7 @@ _COLS = (
     "s.latitude, s.longitude, s.sea_mrgid, "
     "s.environment_id, le.name AS environment_name, "
     "s.entry_id, le2.name AS entry_name, "
-    "s.max_depth_m, s.notes"
+    "s.max_depth_m, s.description, s.description_wildlife, s.notes"
 )
 
 
@@ -79,6 +81,8 @@ def _row_to_site(row: sqlite3.Row) -> Site:
         entry_id=row["entry_id"],
         entry_name=row["entry_name"],
         max_depth_m=row["max_depth_m"],
+        description=row["description"],
+        description_wildlife=row["description_wildlife"],
         notes=row["notes"],
     )
 
@@ -153,6 +157,8 @@ def find_or_create(
     environment_id: int | None = None,
     entry_id: int | None = None,
     max_depth_m: float | None = None,
+    description: str | None = None,
+    description_wildlife: str | None = None,
     notes: str | None = None,
     external_id: tuple[int, str, str | None] | None = None,
     topologies: Sequence[int] | None = None,
@@ -192,13 +198,15 @@ def find_or_create(
             INSERT INTO site (
                 name, region, country, country_code,
                 latitude, longitude, sea_mrgid,
-                environment_id, entry_id, max_depth_m, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                environment_id, entry_id, max_depth_m,
+                description, description_wildlife, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name, region, country, country_code,
                 latitude, longitude, sea_mrgid,
-                environment_id, entry_id, max_depth_m, notes,
+                environment_id, entry_id, max_depth_m,
+                description, description_wildlife, notes,
             ),
         )
         new_id = cur.lastrowid
@@ -239,13 +247,15 @@ def find_or_create(
         INSERT INTO site (
             name, region, country, country_code,
             latitude, longitude, sea_mrgid,
-            environment_id, entry_id, max_depth_m, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            environment_id, entry_id, max_depth_m,
+            description, description_wildlife, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name, region, country, country_code,
             latitude, longitude, sea_mrgid,
-            environment_id, entry_id, max_depth_m, notes,
+            environment_id, entry_id, max_depth_m,
+            description, description_wildlife, notes,
         ),
     )
     new_id = cur.lastrowid

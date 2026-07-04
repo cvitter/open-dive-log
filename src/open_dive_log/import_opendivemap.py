@@ -140,13 +140,16 @@ def _upsert_feature(
                 sea_mrgid = ?,
                 environment_id = ?,
                 entry_id = ?,
-                max_depth_m = ?
+                max_depth_m = ?,
+                description = ?,
+                description_wildlife = ?
             WHERE id = ?
             """,
             (
                 country_code, f.latitude, f.longitude, f.sea_mrgid,
                 env_id, entry_id,
                 float(f.max_depth) if f.max_depth is not None else None,
+                f.description, f.description_wildlife,
                 existing_id,
             ),
         )
@@ -164,6 +167,8 @@ def _upsert_feature(
         environment_id=env_id,
         entry_id=entry_id,
         max_depth_m=float(f.max_depth) if f.max_depth is not None else None,
+        description=f.description,
+        description_wildlife=f.description_wildlife,
         external_id=(source_id, f.external_id, f.external_url),
         topologies=topo_ids,
     )

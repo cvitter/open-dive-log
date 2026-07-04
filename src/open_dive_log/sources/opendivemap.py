@@ -31,6 +31,8 @@ class ODMFeature:
     topologies: tuple[str, ...]
     max_depth: int | None
     entry: str | None
+    description: str | None
+    description_wildlife: str | None
     tags: dict[str, Any]
     external_url: str | None
 
@@ -77,9 +79,21 @@ def _feature_to_odm(feature: dict[str, Any]) -> ODMFeature:
         topologies=tuple(props.get("topologies") or ()),
         max_depth=props.get("max_depth"),
         entry=props.get("entry"),
+        description=_clean_str(tags.get("description")),
+        description_wildlife=_clean_str(tags.get("description_wildlife")),
         tags=tags,
         external_url=external_url,
     )
+
+
+def _clean_str(value: Any) -> str | None:
+    """Normalize a tag value: strip, treat empty/whitespace-only as None."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    stripped = value.strip()
+    return stripped or None
 
 
 def iter_sites(

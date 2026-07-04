@@ -113,7 +113,8 @@ def get_sites(conn: sqlite3.Connection, dive_id: int) -> list[Site]:
         """
         SELECT s.id, s.name, s.region, s.country, s.country_code,
                s.latitude, s.longitude, s.sea_mrgid, s.max_depth_m,
-               s.environment_id, s.entry_id, s.notes
+               s.environment_id, s.entry_id,
+               s.description, s.description_wildlife, s.notes
         FROM dive_site ds
         JOIN site s ON s.id = ds.site_id
         WHERE ds.dive_id = ?
@@ -129,7 +130,10 @@ def get_sites(conn: sqlite3.Connection, dive_id: int) -> list[Site]:
             r["sea_mrgid"], None,           # sea_name
             r["environment_id"], None,      # environment_name
             r["entry_id"], None,            # entry_name
-            r["max_depth_m"], r["notes"],
+            r["max_depth_m"],
+            r["description"] if "description" in r.keys() else None,
+            r["description_wildlife"] if "description_wildlife" in r.keys() else None,
+            r["notes"],
         )
         for r in rows
     ]

@@ -39,6 +39,8 @@ def _feature(
     topos: tuple[str, ...] = ("reef", "wall"),
     max_depth: int | None = 30,
     entry: str | None = "boat",
+    description: str | None = None,
+    description_wildlife: str | None = None,
     tags: dict | None = None,
 ) -> opendivemap.ODMFeature:
     return opendivemap.ODMFeature(
@@ -47,6 +49,7 @@ def _feature(
         latitude=lat, longitude=lon,
         sea_mrgid=None, environment=env, topologies=topos,
         max_depth=max_depth, entry=entry,
+        description=description, description_wildlife=description_wildlife,
         tags=tags or {}, external_url=f"https://opendivemap.com/explore?site={ext}",
     )
 
@@ -118,6 +121,56 @@ def test_import_records_external_id_and_url(conn: sqlite3.Connection) -> None:
     assert ext[0].system_name == "opendivemap"
     assert ext[0].external_id == "abc123"
     assert "opendivemap.com" in ext[0].external_url
+
+
+def test_import_stores_description_and_wildlife(conn: sqlite3.Connection) -> None:
+    out = import_opendivemap._upsert_feature(
+        conn, 1, _feature(
+            description="A beautiful coral wall dropping to 40m.",
+            description_wildlife="Reef sharks, turtles, moray eels.",
+        ),
+    )
+    assert out == "inserted"
+    site_id = conn.execute("SELECT id FROM site").fetchone()["id"]
+    site = sites.get(conn, site_id)
+    assert site.description == "A beautiful coral wall dropping to 40m."
+    assert site.description_wildlife == "Reef sharks, turtles, moray eels."
+
+
+def test_import_description_updated_on_reimport(conn: sqlite3.Connection) -> None:
+    """The update path should refresh descriptions, not just depth/lat/lon."""
+    import_opendivemap._upsert_feature(conn, 1, _feature(description="v1 description"))
+    out2 = import_opendivemap._upsert_feature(conn, 1, _feature(description="v2 description (updated)"))
+    assert out2 == "updated"
+    site_id = conn.execute("SELECT id FROM site").fetchone()["id"]
+    site = sites.get(conn, site_id)
+    assert site.description == "v2 description (updated)"
+
+
+def test_import_empty_description_stored_as_null(conn: sqlite3.Connection) -> None:
+    """Whitespace-only descriptions should normalize to NULL, not ''.
+
+    Tests the real client parser (not the test fixture), since the
+    normalization happens when ODMFeature is built from a raw GeoJSON dict.
+    """
+    raw = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+        "properties": {
+            "id": "aa0001",
+            "name": "EmptyDesc",
+            "tags": {"description": "   \n  ", "description_wildlife": ""},
+        },
+    }
+    feature = opendivemap._feature_to_odm(raw)
+    assert feature.description is None
+    assert feature.description_wildlife is None
+
+    import_opendivemap._upsert_feature(conn, 1, feature)
+    site_id = conn.execute("SELECT id FROM site").fetchone()["id"]
+    site = sites.get(conn, site_id)
+    assert site.description is None
+    assert site.description_wildlife is None
 
 
 def test_import_all_end_to_end_with_fake_iter(monkeypatch, conn, tmp_path) -> None:
