@@ -17,15 +17,22 @@ placeholders — read-only view for now.
 ## Run
 
 ```bash
-PYTHONPATH=src .venv/bin/python3.14 -m open_dive_log          # the GUI
-.venv/bin/python -m open_dive_log.import_opendivemap          # the importer
-.venv/bin/python -m pytest                                    # 42 tests
+bin/run-app.sh                                   # the GUI
+.venv/bin/python -m open_dive_log.import_opendivemap   # the importer
+.venv/bin/python -m pytest                            # 42 tests
 ```
 
-The `PYTHONPATH=src` prefix works around a Python 3.14 + editable-install
-quirk where `.pth` files aren't processed when `PYTHONPATH` is set in the
-environment. The console script at `.venv/bin/open-dive-log` already
-contains the same workaround and can be used directly.
+`bin/run-app.sh` is a shell wrapper that sets `PYTHONPATH=src` and
+launches the venv's Python. This works around a Python 3.14 + Hermes
+quirk where the venv's editable-install `.pth` file isn't processed
+when `PYTHONPATH` is set in the environment — `python3.14 -m
+open_dive_log` from a Hermes terminal fails with `ModuleNotFoundError`.
+The shell wrapper sidesteps that without fighting pip's console-script
+template. If you'd rather invoke it directly, the same fix is:
+
+```bash
+PYTHONPATH=src .venv/bin/python3.14 -m open_dive_log
+```
 
 ## GUI
 
