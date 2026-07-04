@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "open-dive-log"
+version = "0.0.1"
+description = "An open-source desktop application for logging scuba dives"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.14"
+dependencies = [
+    # PySide6 6.7.x has no wheel for Python 3.14. Using 6.8+ (latest 6.11.1
+    # verified working on macOS arm64 / Homebrew Python 3.14.5 — the Qt plugin
+    # loader bug noted in the existing dive-log repo does not reproduce here).
+    "PySide6>=6.8,<6.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+open-dive-log = "open_dive_log.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/open_dive_log"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
