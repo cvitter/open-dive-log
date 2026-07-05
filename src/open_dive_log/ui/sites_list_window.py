@@ -17,10 +17,15 @@ from collections.abc import Iterable
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QDialog,
     QHeaderView,
+    QLabel,
+    QLineEdit,
     QMainWindow,
+    QMessageBox,
     QStatusBar,
     QTableView,
+    QToolBar,
 )
 
 from open_dive_log.repositories import sites as sites_repo
@@ -37,16 +42,56 @@ HEADERS: tuple[tuple[str, str], ...] = (
 
 
 class SiteTableModel(QAbstractTableModel):
-    """Loads sites via `sites_repo.list_all` and exposes them as a table."""
+    """Loads sites via `sites_repo.list_all` and exposes them as a table.
+
+    Supports a name-substring filter (`set_filter`). The filter is
+    case-insensitive substring match against the `name` field. The
+    underlying data (`_all_rows`) is preserved; `_rows` is the
+    filtered view. `set_rows` resets the filter to "show all".
+    """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self._all_rows: list[sites_repo.Site] = []
         self._rows: list[sites_repo.Site] = []
+        self._filter: str = ""
 
     def set_rows(self, rows: Iterable[sites_repo.Site]) -> None:
+        """Replace the underlying data and reset the filter."""
         self.beginResetModel()
-        self._rows = list(rows)
+        self._all_rows = list(rows)
+        self._filter = ""
+        self._rows = list(self._all_rows)
         self.endResetModel()
+
+    def set_filter(self, name_substring: str) -> None:
+        """Filter the visible rows to those whose name contains the given
+        substring (case-insensitive). Empty string shows all rows.
+
+        Triggered on every keystroke in the search box — for 3,123
+        sites this is fast (linear scan, single field match) and
+        avoids a DB round-trip per keystroke.
+        """
+        needle = name_substring.lower()
+        if needle == self._filter:
+            return  # no-op
+        self.beginResetModel()
+        self._filter = needle
+        if not needle:
+            self._rows = list(self._all_rows)
+        else:
+            self._rows = [
+                s for s in self._all_rows
+                if needle in (s.name or "").lower()
+            ]
+        self.endResetModel()
+
+    def filter(self) -> str:
+        return self._filter
+
+    def total_count(self) -> int:
+        """Number of sites in the underlying data (before filter)."""
+        return len(self._all_rows)
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
         if parent.isValid():
@@ -103,9 +148,25 @@ class SiteTableModel(QAbstractTableModel):
 
 
 class SitesListWindow(QMainWindow):
-    """Read-only table of sites."""
+    """Read-only-by-default table of sites, with a search box and
+    Edit / Delete actions on the current selection.
 
-    DEFAULT_LIMIT = 1000
+    Selection model:
+      * The user types into the search box to narrow the visible
+        rows (case-insensitive substring on the name field).
+      * When a row is selected, the Edit and Delete toolbar /
+        context-menu actions become enabled. They act on the
+        selected row.
+      * Double-click a row to edit it (matches the dive list
+        behavior).
+
+    The Edit / Delete actions are also exposed on the main window's
+    Sites menu (handled by main_window.py), which dispatches to
+    this window's selection when it's open. The actions live here
+    because this is where the user actually sees and selects a site.
+    """
+
+    DEFAULT_LIMIT = 5000
 
     def __init__(self, conn: sqlite3.Connection, parent=None) -> None:
         super().__init__(parent)
@@ -123,26 +184,216 @@ class SitesListWindow(QMainWindow):
         self._table.setAlternatingRowColors(True)
         self._table.setSortingEnabled(False)  # default order is the SQL one
         self._table.verticalHeader().setVisible(False)
+        # Double-click to edit — matches the dive list behavior
+        self._table.doubleClicked.connect(self._on_edit_action)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
+
+        # --- Toolbar: search + Edit + Delete ----------------------------
+        toolbar = QToolBar("Sites", self)
+        toolbar.setMovable(False)
+        self.addToolBar(toolbar)
+
+        toolbar.addWidget(QLabel(" Search: "))
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Filter by site name…")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(self._on_search_changed)
+        # Sensible width — the toolbar widget will grow with the window
+        self._search.setMinimumWidth(220)
+        toolbar.addWidget(self._search)
+
+        toolbar.addSeparator()
+
+        self._action_edit = QAction("&Edit…", self)
+        self._action_edit.setShortcut("Ctrl+E")
+        self._action_edit.triggered.connect(self._on_edit_action)
+        self._action_edit.setEnabled(False)
+        toolbar.addAction(self._action_edit)
+
+        self._action_delete = QAction("&Delete", self)
+        self._action_delete.setShortcut("Delete")
+        self._action_delete.triggered.connect(self._on_delete_action)
+        self._action_delete.setEnabled(False)
+        toolbar.addAction(self._action_delete)
+
+        # --- Central widget ---------------------------------------------
         self.setCentralWidget(self._table)
 
+        # --- Status bar --------------------------------------------------
         self.setStatusBar(QStatusBar(self))
+
+        # --- Context menu on the table (right-click) --------------------
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+        self._table.addAction(self._action_edit)
+        self._table.addAction(self._action_delete)
+
+        # --- Selection-driven enable/disable ----------------------------
+        sel_model = self._table.selectionModel()
+        sel_model.selectionChanged.connect(self._on_selection_changed)
+
         self.refresh()
 
+    # ------------------------------------------------------------------ API
     def refresh(self) -> None:
+        """Reload the sites from the DB. The current filter is preserved
+        (so re-importing from opendivemap doesn't lose the user's
+        typed search)."""
         rows = sites_repo.list_all(self._conn)
         if len(rows) > self.DEFAULT_LIMIT:
-            # Cap at DEFAULT_LIMIT for the default view. A search box will
-            # come in a later phase; this keeps the table snappy.
             shown = rows[: self.DEFAULT_LIMIT]
         else:
             shown = rows
         self._model.set_rows(shown)
-        total = len(rows)
-        shown_n = len(shown)
-        if total > shown_n:
-            self.statusBar().showMessage(f"Showing {shown_n} of {total} sites")
+        # Re-apply any active filter
+        if self._search.text():
+            self._model.set_filter(self._search.text())
+        self._update_status()
+
+    def selected_site(self) -> sites_repo.Site | None:
+        """Return the currently selected Site, or None if no row is
+        selected (or the search filter hid it)."""
+        rows = self._table.selectionModel().selectedRows()
+        if not rows:
+            return None
+        idx = rows[0]
+        if not (0 <= idx.row() < self._model.rowCount()):
+            return None
+        return self._model._rows[idx.row()]
+
+    def edit_selected(self) -> bool:
+        """Public hook used by main_window.py: open the edit dialog for
+        the currently selected row. Returns False if there's no
+        selection (so the main window can fall back to opening the
+        list window with a status message)."""
+        site = self.selected_site()
+        if site is None:
+            return False
+        self._do_edit(site)
+        return True
+
+    def delete_selected(self) -> bool:
+        """Public hook used by main_window.py: delete the currently
+        selected row. Returns False if there's no selection."""
+        site = self.selected_site()
+        if site is None:
+            return False
+        self._do_delete(site)
+        return True
+
+    # --------------------------------------------------------- selection
+    def _on_selection_changed(self, *_args) -> None:
+        has_sel = self.selected_site() is not None
+        self._action_edit.setEnabled(has_sel)
+        self._action_delete.setEnabled(has_sel)
+
+    # ------------------------------------------------------------- search
+    def _on_search_changed(self, text: str) -> None:
+        self._model.set_filter(text)
+        self._update_status()
+
+    # ----------------------------------------------------------- actions
+    def _on_edit_action(self, *_args) -> None:
+        site = self.selected_site()
+        if site is not None:
+            self._do_edit(site)
+
+    def _on_delete_action(self, *_args) -> None:
+        site = self.selected_site()
+        if site is not None:
+            self._do_delete(site)
+
+    def _do_edit(self, site: sites_repo.Site) -> None:
+        from open_dive_log.ui.site_add_edit_dialog import (
+            SiteAddEditDialog, SubmittedSite,
+        )
+        dlg = SiteAddEditDialog(self._conn, site=site, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        sub: SubmittedSite = dlg.submitted()
+        assert sub is not None
+        try:
+            sites_repo.update(
+                self._conn, site.id,
+                name=sub.name,
+                region=sub.region,
+                country=sub.country,
+                latitude=sub.latitude,
+                longitude=sub.longitude,
+                environment_id=sub.environment_id,
+                entry_id=sub.entry_id,
+                max_depth_m=sub.max_depth_m,
+                description=sub.description,
+                description_wildlife=sub.description_wildlife,
+                notes=sub.notes,
+            )
+        except sqlite3.IntegrityError as e:
+            QMessageBox.critical(
+                self, "Save failed",
+                f"Could not save the site — likely a duplicate "
+                f"(name, country) combination with an existing site.\n\n{e}",
+            )
+            return
+        except LookupError as e:
+            QMessageBox.warning(self, "Site missing", str(e))
+            return
+        self.refresh()
+        # Re-select the same row so the user can see their edit
+        self._reselect_by_id(site.id)
+        self.statusBar().showMessage(f"Updated site #{site.id}: {sub.name}", 5000)
+
+    def _do_delete(self, site: sites_repo.Site) -> None:
+        answer = QMessageBox.question(
+            self, "Delete site?",
+            f"Delete site #{site.id} '{site.name}'?\n\n"
+            f"This cannot be undone. If any dives reference this site, "
+            f"the delete will be blocked.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            sites_repo.delete(self._conn, site.id)
+        except sqlite3.IntegrityError:
+            blockers = sites_repo.list_blocking_dives(self._conn, site.id)
+            lines = "\n".join(f"  • #{d_id} ({d_date})" for d_id, d_date in blockers)
+            extra = "" if len(blockers) <= 10 else f"\n  (… and more)"
+            QMessageBox.warning(
+                self, "Delete blocked",
+                f"Cannot delete site #{site.id} '{site.name}' — it's "
+                f"referenced by {len(blockers)} dive(s):\n\n{lines}{extra}\n\n"
+                f"Edit or delete those dives first, then try again.",
+            )
+            return
+        except LookupError as e:
+            QMessageBox.warning(self, "Site missing", str(e))
+            return
+        self.refresh()
+        self.statusBar().showMessage(f"Deleted site #{site.id}: {site.name}", 5000)
+
+    def _reselect_by_id(self, site_id: int) -> None:
+        """After refresh, re-select the row whose site id matches.
+        The row order may have changed (if the user edited the name
+        and the sort is by name), so look it up in the model."""
+        for i in range(self._model.rowCount()):
+            if self._model._rows[i].id == site_id:
+                idx = self._model.index(i, 0)
+                self._table.setCurrentIndex(idx)
+                return
+
+    # ---------------------------------------------------------- status bar
+    def _update_status(self) -> None:
+        shown = self._model.rowCount()
+        total = self._model.total_count()
+        needle = self._search.text().strip()
+        if needle and shown != total:
+            self.statusBar().showMessage(
+                f"Showing {shown} of {total} sites matching “{needle}”"
+            )
+        elif shown != total:
+            # We capped at DEFAULT_LIMIT
+            self.statusBar().showMessage(f"Showing {shown} of {total} sites")
         else:
             self.statusBar().showMessage(f"{total} sites")

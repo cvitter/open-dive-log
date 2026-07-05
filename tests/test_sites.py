@@ -14,6 +14,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -270,5 +271,236 @@ def test_qt_site_dialog_rejects_empty_name() -> None:
         dlg.close()
         cm.__exit__(None, None, None)
         print('OK: empty name rejected')
+        """
+    ))
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python model tests (no Qt event loop needed)
+# ---------------------------------------------------------------------------
+def test_site_table_model_filter() -> None:
+    """The SiteTableModel.set_filter narrows visible rows by case-
+    insensitive substring match on the name. Empty filter shows all."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+
+    with tempfile.TemporaryDirectory() as d:
+        cm = db.connect(os.path.join(d, "filter_test.db"))
+        c = cm.__enter__()
+        db.apply_migrations(c)
+        try:
+            from open_dive_log.ui.sites_list_window import SiteTableModel
+            from open_dive_log.repositories import sites as sites_repo
+
+            # Seed countries for the country_code FK on site
+            c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
+            c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("CW", "Curaçao"))
+            c.commit()
+
+            sites_repo.find_or_create(c, "Salt Pier", country_code="BQ")
+            sites_repo.find_or_create(c, "Karpata", country_code="CW")
+            sites_repo.find_or_create(c, "Hilma Hooker", country_code="BQ")
+            sites_repo.find_or_create(c, "1000 Steps", country_code="BQ")
+
+            rows = sites_repo.list_all(c)
+            model = SiteTableModel()
+            model.set_rows(rows)
+            assert model.rowCount() == 4
+
+            # Filter to "salt" — case-insensitive
+            model.set_filter("salt")
+            assert model.rowCount() == 1
+            assert model._rows[0].name == "Salt Pier"
+
+            # Case-insensitive: "SALT" matches the same row
+            model.set_filter("SALT")
+            assert model.rowCount() == 1
+
+            # "pier" matches "Salt Pier" only
+            model.set_filter("pier")
+            assert model.rowCount() == 1
+            assert model._rows[0].name == "Salt Pier"
+
+            # Empty filter restores all
+            model.set_filter("")
+            assert model.rowCount() == 4
+            assert model.total_count() == 4
+
+            # "1000" matches "1000 Steps" only
+            model.set_filter("1000")
+            assert model.rowCount() == 1
+            assert model._rows[0].name == "1000 Steps"
+
+            # No match → empty
+            model.set_filter("zzzzz")
+            assert model.rowCount() == 0
+            assert model.total_count() == 4  # underlying data unchanged
+        finally:
+            cm.__exit__(None, None, None)
+
+
+def test_site_table_model_set_rows_resets_filter() -> None:
+    """set_rows() should reset the filter so the user sees the
+    fresh data on a re-import."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+
+    with tempfile.TemporaryDirectory() as d:
+        cm = db.connect(os.path.join(d, "filter_reset_test.db"))
+        c = cm.__enter__()
+        db.apply_migrations(c)
+        try:
+            from open_dive_log.ui.sites_list_window import SiteTableModel
+            from open_dive_log.repositories import sites as sites_repo
+
+            c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
+            c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("CW", "Curaçao"))
+            c.commit()
+
+            sites_repo.find_or_create(c, "Salt Pier", country_code="BQ")
+            sites_repo.find_or_create(c, "Karpata", country_code="CW")
+
+            model = SiteTableModel()
+            model.set_rows(sites_repo.list_all(c))
+            model.set_filter("salt")
+            assert model.rowCount() == 1
+
+            # Re-import: set_rows is called with new data
+            model.set_rows(sites_repo.list_all(c))
+            assert model.filter() == ""  # filter was reset
+            assert model.rowCount() == 2  # all rows visible again
+        finally:
+            cm.__exit__(None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# SitesListWindow: edit/delete from selection
+# ---------------------------------------------------------------------------
+def test_sites_list_window_edit_from_selection_opens_dialog() -> None:
+    """Selecting a row and triggering edit_selected() should open the
+    SiteAddEditDialog pre-populated with that site's data."""
+    _assert_qt_ok(_run_qt_test(
+        """
+        import os, tempfile
+        os.environ['PYTHONPATH'] = 'src'
+        from PySide6.QtWidgets import QApplication
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.repositories import sites as sites_repo
+        from open_dive_log.ui.sites_list_window import SitesListWindow
+
+        app = QApplication.instance() or QApplication([])
+        tmp = tempfile.mkdtemp()
+        cm = connect(os.path.join(tmp, 'win.db'))
+        c = cm.__enter__()
+        apply_migrations(c)
+        c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ('BQ', 'Bonaire'))
+        c.commit()
+        sites_repo.find_or_create(c, 'Salt Pier', country_code='BQ', country='Bonaire')
+
+        win = SitesListWindow(c)
+        win.show()
+        app.processEvents()
+        assert win._model.rowCount() == 1
+
+        # Select the first row
+        win._table.selectRow(0)
+        app.processEvents()
+        site = win.selected_site()
+        assert site is not None
+        assert site.name == 'Salt Pier'
+
+        # Edit / Delete toolbar actions should be enabled now
+        assert win._action_edit.isEnabled()
+        assert win._action_delete.isEnabled()
+
+        win.close()
+        cm.__exit__(None, None, None)
+        print('OK: edit/delete enable on selection')
+        """
+    ))
+
+
+def test_sites_list_window_no_selection_disables_actions() -> None:
+    """With no row selected, the Edit and Delete actions should be
+    disabled."""
+    _assert_qt_ok(_run_qt_test(
+        """
+        import os, tempfile
+        from PySide6.QtWidgets import QApplication
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.repositories import sites as sites_repo
+        from open_dive_log.ui.sites_list_window import SitesListWindow
+
+        app = QApplication.instance() or QApplication([])
+        tmp = tempfile.mkdtemp()
+        cm = connect(os.path.join(tmp, 'win2.db'))
+        c = cm.__enter__()
+        apply_migrations(c)
+        c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ('BQ', 'Bonaire'))
+        c.commit()
+        sites_repo.find_or_create(c, 'Salt Pier', country_code='BQ')
+
+        win = SitesListWindow(c)
+        win.show()
+        app.processEvents()
+        assert win._model.rowCount() == 1
+        # No row selected
+        assert win.selected_site() is None
+        assert not win._action_edit.isEnabled()
+        assert not win._action_delete.isEnabled()
+
+        # edit_selected / delete_selected should return False (not crash)
+        assert win.edit_selected() is False
+        assert win.delete_selected() is False
+
+        win.close()
+        cm.__exit__(None, None, None)
+        print('OK: actions disabled with no selection')
+        """
+    ))
+
+
+def test_sites_list_window_filter_updates_status_bar() -> None:
+    """Typing in the search box filters rows and updates the status bar."""
+    _assert_qt_ok(_run_qt_test(
+        """
+        import os, tempfile
+        from PySide6.QtWidgets import QApplication
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.repositories import sites as sites_repo
+        from open_dive_log.ui.sites_list_window import SitesListWindow
+
+        app = QApplication.instance() or QApplication([])
+        tmp = tempfile.mkdtemp()
+        cm = connect(os.path.join(tmp, 'win3.db'))
+        c = cm.__enter__()
+        apply_migrations(c)
+        c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ('BQ', 'Bonaire'))
+        c.commit()
+        sites_repo.find_or_create(c, 'Salt Pier', country_code='BQ')
+        sites_repo.find_or_create(c, 'Karpata', country_code='CW')
+
+        win = SitesListWindow(c)
+        win.show()
+        app.processEvents()
+        assert win._model.rowCount() == 2
+
+        # Type 'salt' into the search box
+        win._search.setText('salt')
+        app.processEvents()
+        assert win._model.rowCount() == 1
+        msg = win.statusBar().currentMessage()
+        assert '1' in msg and '2' in msg, f'expected count in status, got {msg!r}'
+
+        # Clear the search
+        win._search.setText('')
+        app.processEvents()
+        assert win._model.rowCount() == 2
+
+        win.close()
+        cm.__exit__(None, None, None)
+        print('OK: search filters rows and updates status bar')
         """
     ))

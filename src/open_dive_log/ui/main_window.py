@@ -412,35 +412,6 @@ class MainWindow(QMainWindow):
         if self._sites_window is not None:
             self._sites_window.refresh()
 
-    def _pick_site_for_edit(self) -> int | None:
-        """Show a site picker and return the chosen site id, or None.
-
-        Used by _on_edit_site and _on_delete_site so the user has
-        a way to pick a site without first opening the list window.
-        """
-        from PySide6.QtWidgets import QInputDialog
-        from open_dive_log.repositories import sites as sites_repo
-        rows = sites_repo.list_all(self._conn)
-        if not rows:
-            QMessageBox.information(
-                self, "No sites",
-                "There are no sites in the database yet. Create one with "
-                "Sites → New Site, or import from opendivemap first.",
-            )
-            return None
-        # Sort alphabetically by name for the picker
-        rows.sort(key=lambda s: (s.name or "").lower())
-        items = [
-            f"{s.name} — {s.country_name or s.country or s.country_code or '?'}"
-            for s in rows
-        ]
-        choice, ok = QInputDialog.getItem(
-            self, "Select a site", "Site:", items, 0, False,
-        )
-        if not ok:
-            return None
-        return rows[items.index(choice)].id
-
     def _on_new_site(self) -> None:
         from open_dive_log.ui.site_add_edit_dialog import (
             SiteAddEditDialog, SubmittedSite,
@@ -477,88 +448,43 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Created site #{site.id}: {site.name}", 5000)
 
     def _on_edit_site(self) -> None:
-        from open_dive_log.ui.site_add_edit_dialog import (
-            SiteAddEditDialog, SubmittedSite,
-        )
-        from open_dive_log.repositories import sites as sites_repo
-        site_id = self._pick_site_for_edit()
-        if site_id is None:
-            return
-        site = sites_repo.get(self._conn, site_id)
-        if site is None:
-            QMessageBox.warning(self, "Site missing", f"Site #{site_id} no longer exists.")
-            return
-        dlg = SiteAddEditDialog(self._conn, site=site, parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        sub: SubmittedSite = dlg.submitted()
-        assert sub is not None
-        try:
-            sites_repo.update(
-                self._conn, site_id,
-                name=sub.name,
-                region=sub.region,
-                country=sub.country,
-                latitude=sub.latitude,
-                longitude=sub.longitude,
-                environment_id=sub.environment_id,
-                entry_id=sub.entry_id,
-                max_depth_m=sub.max_depth_m,
-                description=sub.description,
-                description_wildlife=sub.description_wildlife,
-                notes=sub.notes,
-            )
-        except sqlite3.IntegrityError as e:
-            QMessageBox.critical(
-                self, "Save failed",
-                f"Could not save the site — likely a duplicate "
-                f"(name, country) combination with an existing site.\n\n{e}",
+        """Edit the selected row in the Sites List window.
+
+        If the list window isn't open, open it and tell the user to
+        pick a row. (We don't fall back to a QInputDialog picker
+        anymore — the user's spec is that the actions live on the
+        list page, with a search box for finding sites quickly.)
+        """
+        if self._sites_window is None or not self._sites_window.isVisible():
+            self._open_sites_window()
+            self.statusBar().showMessage(
+                "Open the Sites list, type to filter, and select a row to edit.",
+                5000,
             )
             return
-        except LookupError as e:
-            QMessageBox.warning(self, "Site missing", str(e))
-            return
-        self._refresh_sites_window()
-        self.statusBar().showMessage(f"Updated site #{site_id}: {sub.name}", 5000)
+        if not self._sites_window.edit_selected():
+            # The list window is open but no row is selected
+            self.statusBar().showMessage(
+                "Select a site in the list to edit.", 5000,
+            )
+            self._sites_window.activateWindow()
+            self._sites_window._table.setFocus()
 
     def _on_delete_site(self) -> None:
-        from open_dive_log.repositories import sites as sites_repo
-        site_id = self._pick_site_for_edit()
-        if site_id is None:
-            return
-        site = sites_repo.get(self._conn, site_id)
-        if site is None:
-            QMessageBox.warning(self, "Site missing", f"Site #{site_id} no longer exists.")
-            return
-        # Confirm
-        answer = QMessageBox.question(
-            self, "Delete site?",
-            f"Delete site #{site.id} '{site.name}'?\n\n"
-            f"This cannot be undone. If any dives reference this site, "
-            f"the delete will be blocked.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            sites_repo.delete(self._conn, site_id)
-        except sqlite3.IntegrityError:
-            blockers = sites_repo.list_blocking_dives(self._conn, site_id)
-            lines = "\n".join(f"  • #{d_id} ({d_date})" for d_id, d_date in blockers)
-            extra = "" if len(blockers) <= 10 else f"\n  (… and more)"
-            QMessageBox.warning(
-                self, "Delete blocked",
-                f"Cannot delete site #{site.id} '{site.name}' — it's "
-                f"referenced by {len(blockers)} dive(s):\n\n{lines}{extra}\n\n"
-                f"Edit or delete those dives first, then try again.",
+        """Delete the selected row in the Sites List window."""
+        if self._sites_window is None or not self._sites_window.isVisible():
+            self._open_sites_window()
+            self.statusBar().showMessage(
+                "Open the Sites list, type to filter, and select a row to delete.",
+                5000,
             )
             return
-        except LookupError as e:
-            QMessageBox.warning(self, "Site missing", str(e))
-            return
-        self._refresh_sites_window()
-        self.statusBar().showMessage(f"Deleted site #{site_id}: {site.name}", 5000)
+        if not self._sites_window.delete_selected():
+            self.statusBar().showMessage(
+                "Select a site in the list to delete.", 5000,
+            )
+            self._sites_window.activateWindow()
+            self._sites_window._table.setFocus()
 
     def _open_certs_window(self) -> None:
         if self._certs_window is None:
