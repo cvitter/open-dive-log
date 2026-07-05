@@ -137,23 +137,22 @@ def test_format_pressure_imperial() -> None:
     assert _format_pressure(None, UnitSystem.IMPERIAL) == ""
 
 
-def test_table_model_has_ten_columns() -> None:
-    """The user's spec is 9 columns (Dive#/date/air temp/water temp/
-    visibility/pressure start/pressure end/depth avg/depth max); we
-    added Site as the 10th. Verify both the count and the column
-    constants in order.
+def test_table_model_has_eleven_columns() -> None:
+    """The user's spec added a 'Bottom time (min)' column next to Date,
+    bringing the total to 11: Dive#/date/bottom time/air temp/water
+    temp/visibility/pressure start/pressure end/depth avg/depth
+    max/site. Verify both the count and the column constants in order.
     """
     from open_dive_log.ui.dive_table_model import (
-        COL_DIVE_NUM, COL_DATE, COL_AIR_TEMP, COL_WATER_TEMP, COL_VISIBILITY,
-        COL_PRESSURE_START, COL_PRESSURE_END, COL_DEPTH_AVG, COL_DEPTH_MAX,
-        COL_SITE, NUM_COLS,
+        COL_DIVE_NUM, COL_DATE, COL_BOTTOM_TIME, COL_AIR_TEMP, COL_WATER_TEMP,
+        COL_VISIBILITY, COL_PRESSURE_START, COL_PRESSURE_END, COL_DEPTH_AVG,
+        COL_DEPTH_MAX, COL_SITE, NUM_COLS,
     )
-    assert NUM_COLS == 10
-    # Order matters: dive#/date/air temp/water temp/visibility/pressure
-    # start/pressure end/depth avg/depth max/site
-    assert (COL_DIVE_NUM, COL_DATE, COL_AIR_TEMP, COL_WATER_TEMP, COL_VISIBILITY,
-            COL_PRESSURE_START, COL_PRESSURE_END, COL_DEPTH_AVG, COL_DEPTH_MAX,
-            COL_SITE) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+    assert NUM_COLS == 11
+    # Order matters
+    assert (COL_DIVE_NUM, COL_DATE, COL_BOTTOM_TIME, COL_AIR_TEMP, COL_WATER_TEMP,
+            COL_VISIBILITY, COL_PRESSURE_START, COL_PRESSURE_END, COL_DEPTH_AVG,
+            COL_DEPTH_MAX, COL_SITE) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 
 
 def test_table_model_headers_metric() -> None:
@@ -162,7 +161,7 @@ def test_table_model_headers_metric() -> None:
     headers = _build_headers(UnitSystem.METRIC)
     labels = [h[0] for h in headers]
     assert labels == [
-        "Dive #", "Date", "Air temp (°C)", "Water temp (°C)",
+        "Dive #", "Date", "Bottom time (min)", "Air temp (°C)", "Water temp (°C)",
         "Visibility (m)", "P start (bar)", "P end (bar)",
         "Depth avg (m)", "Depth max (m)", "Site",
     ]
@@ -174,10 +173,22 @@ def test_table_model_headers_imperial() -> None:
     headers = _build_headers(UnitSystem.IMPERIAL)
     labels = [h[0] for h in headers]
     assert labels == [
-        "Dive #", "Date", "Air temp (°F)", "Water temp (°F)",
+        "Dive #", "Date", "Bottom time (min)", "Air temp (°F)", "Water temp (°F)",
         "Visibility (ft)", "P start (psi)", "P end (psi)",
         "Depth avg (ft)", "Depth max (ft)", "Site",
     ]
+
+
+def test_format_bottom_time() -> None:
+    """Bottom time is a duration; it doesn't change with the unit
+    toggle. None → empty string. 0 is a valid value (aborted dive)."""
+    from open_dive_log.ui.dive_table_model import _format_bottom_time
+    from open_dive_log.units import UnitSystem
+    for unit in (UnitSystem.METRIC, UnitSystem.IMPERIAL):
+        assert _format_bottom_time(None, unit) == ""
+        assert _format_bottom_time(0, unit) == "0 min"
+        assert _format_bottom_time(45, unit) == "45 min"
+        assert _format_bottom_time(120, unit) == "120 min"
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +274,7 @@ def test_temp_spin_min_in_imperial_is_neg_58F(conn: sqlite3.Connection) -> None:
 # Pressure fields (migration 006)
 # ---------------------------------------------------------------------------
 def test_load_rows_includes_pressure_and_avg_depth(tmp_path: Path) -> None:
-    """The DiveRow dataclass must carry all 10 columns' data from the DB.
+    """The DiveRow dataclass must carry all 11 columns' data from the DB.
 
     Uses an isolated connection (not the shared `conn` fixture) so we
     can assert an exact row count.
@@ -275,6 +286,7 @@ def test_load_rows_includes_pressure_and_avg_depth(tmp_path: Path) -> None:
     try:
         did = dives.create(
             c, dive_date="2026-06-15",
+            dive_time_minutes=45,
             max_depth_m=24.0, avg_depth_m=18.0,
             air_temp_c=28.0, water_temp_c=27.0, visibility_m=20.0,
             start_pressure_bar=200.0, end_pressure_bar=80.0,
@@ -282,6 +294,7 @@ def test_load_rows_includes_pressure_and_avg_depth(tmp_path: Path) -> None:
         rows = load_rows(c)
         assert len(rows) == 1
         assert rows[0].id == did
+        assert rows[0].bottom_time_min == 45
         assert rows[0].max_depth_m == 24.0
         assert rows[0].avg_depth_m == 18.0
         assert rows[0].air_temp_c == 28.0

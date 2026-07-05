@@ -8,14 +8,15 @@ display units follow the user's preference (`UnitSystem.METRIC` or
 Columns (imperial mode shown in parens):
     0  Dive #         the dive's id (1 = first inserted, n = latest)
     1  Date
-    2  Air temp       (°C / °F)
-    3  Water temp     (°C / °F)
-    4  Visibility     (m / ft)
-    5  Pressure start (bar / psi)
-    6  Pressure end   (bar / psi)
-    7  Depth avg      (m / ft)
-    8  Depth max      (m / ft)
-    9  Site
+    2  Bottom time    (min — duration, same in both unit systems)
+    3  Air temp       (°C / °F)
+    4  Water temp     (°C / °F)
+    5  Visibility     (m / ft)
+    6  Pressure start (bar / psi)
+    7  Pressure end   (bar / psi)
+    8  Depth avg      (m / ft)
+    9  Depth max      (m / ft)
+   10  Site
 
 Dive # is the dive's primary key (1 = first inserted, n = most recent).
 The list sorts newest first by `dive_date DESC, start_time DESC`, so
@@ -49,15 +50,16 @@ from open_dive_log.units import (
 # Column index constants
 COL_DIVE_NUM = 0
 COL_DATE = 1
-COL_AIR_TEMP = 2
-COL_WATER_TEMP = 3
-COL_VISIBILITY = 4
-COL_PRESSURE_START = 5
-COL_PRESSURE_END = 6
-COL_DEPTH_AVG = 7
-COL_DEPTH_MAX = 8
-COL_SITE = 9
-NUM_COLS = 10
+COL_BOTTOM_TIME = 2
+COL_AIR_TEMP = 3
+COL_WATER_TEMP = 4
+COL_VISIBILITY = 5
+COL_PRESSURE_START = 6
+COL_PRESSURE_END = 7
+COL_DEPTH_AVG = 8
+COL_DEPTH_MAX = 9
+COL_SITE = 10
+NUM_COLS = 11
 
 
 def _build_headers(system: UnitSystem) -> tuple[tuple[str, str], ...]:
@@ -66,6 +68,7 @@ def _build_headers(system: UnitSystem) -> tuple[tuple[str, str], ...]:
         return (
             ("Dive #", "The dive's id (1 = first inserted, n = latest)."),
             ("Date", "Dive date (YYYY-MM-DD). Sorted newest first."),
+            ("Bottom time (min)", "Total time underwater, in minutes."),
             ("Air temp (°C)", "Surface air temperature on the day of the dive, in °C."),
             ("Water temp (°C)", "Water temperature at depth, in °C."),
             ("Visibility (m)", "Horizontal visibility at depth, in meters."),
@@ -78,6 +81,7 @@ def _build_headers(system: UnitSystem) -> tuple[tuple[str, str], ...]:
     return (
         ("Dive #", "The dive's id (1 = first inserted, n = latest)."),
         ("Date", "Dive date (YYYY-MM-DD). Sorted newest first."),
+        ("Bottom time (min)", "Total time underwater, in minutes."),
         ("Air temp (°F)", "Surface air temperature on the day of the dive, in °F."),
         ("Water temp (°F)", "Water temperature at depth, in °F."),
         ("Visibility (ft)", "Horizontal visibility at depth, in feet."),
@@ -95,6 +99,7 @@ class DiveRow:
     id: int
     dive_date: str
     sites: str
+    bottom_time_min: int | None
     max_depth_m: float | None
     avg_depth_m: float | None
     air_temp_c: float | None
@@ -165,9 +170,21 @@ def _format_pressure(bar: float | None, system: UnitSystem) -> str:
     return f"{psi:.1f} psi"
 
 
+def _format_bottom_time(minutes: int | None, system: UnitSystem) -> str:
+    """Format bottom time (total time underwater) in minutes.
+
+    The unit toggle doesn't affect this formatter — duration is the
+    same in both systems. None → empty string. 0 is a valid value
+    (an aborted dive) and displays as "0 min".
+    """
+    if minutes is None:
+        return ""
+    return f"{int(minutes)} min"
+
+
 # Columns whose values are numeric and should be right-aligned
 _RIGHT_ALIGNED = (
-    COL_DIVE_NUM, COL_AIR_TEMP, COL_WATER_TEMP, COL_VISIBILITY,
+    COL_DIVE_NUM, COL_BOTTOM_TIME, COL_AIR_TEMP, COL_WATER_TEMP, COL_VISIBILITY,
     COL_PRESSURE_START, COL_PRESSURE_END, COL_DEPTH_AVG, COL_DEPTH_MAX,
 )
 
@@ -185,6 +202,7 @@ def load_rows(conn: sqlite3.Connection, limit: int = 500) -> list[DiveRow]:
             id=r["id"],
             dive_date=r["dive_date"],
             sites=r["sites"],
+            bottom_time_min=r.get("dive_time_minutes"),
             max_depth_m=r.get("max_depth_m"),
             avg_depth_m=r.get("avg_depth_m"),
             air_temp_c=r.get("air_temp_c"),
@@ -271,6 +289,8 @@ class DiveTableModel(QAbstractTableModel):
                 return str(row.id)
             if col == COL_DATE:
                 return row.dive_date
+            if col == COL_BOTTOM_TIME:
+                return _format_bottom_time(row.bottom_time_min, self._units)
             if col == COL_AIR_TEMP:
                 return _format_temp(row.air_temp_c, self._units)
             if col == COL_WATER_TEMP:
