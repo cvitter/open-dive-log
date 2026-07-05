@@ -282,3 +282,94 @@ def attach_topologies(
             "INSERT OR IGNORE INTO site_site_topology (site_id, topology_id) VALUES (?, ?)",
             (site_id, t_id),
         )
+
+
+# ---------------------------------------------------------------------------
+# Update / delete
+# ---------------------------------------------------------------------------
+def update(
+    conn: sqlite3.Connection,
+    site_id: int,
+    *,
+    name: str,
+    region: str | None = None,
+    country: str | None = None,
+    country_code: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    environment_id: int | None = None,
+    entry_id: int | None = None,
+    max_depth_m: float | None = None,
+    description: str | None = None,
+    description_wildlife: str | None = None,
+    notes: str | None = None,
+) -> None:
+    """Update an existing site. Raises LookupError if id not found.
+
+    Performs a direct UPDATE — does NOT go through find_or_create's
+    dedup, because renaming a site to match a different (name, country)
+    pair would silently collapse two sites into one. We let the
+    UNIQUE (name, country) constraint on the table reject illegal
+    renames with a clear IntegrityError; the form catches that and
+    shows the user what went wrong.
+
+    Note: country_code is intentionally NOT updated here. Country
+    code is the modern, opendivemap-compatible key and should be
+    stable once set. If a user really needs to change it, that's a
+    data import / migration concern, not a UI form concern.
+    """
+    cur = conn.execute(
+        """
+        UPDATE site
+           SET name = ?, region = ?, country = ?,
+               latitude = ?, longitude = ?,
+               environment_id = ?, entry_id = ?,
+               max_depth_m = ?,
+               description = ?, description_wildlife = ?, notes = ?,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+        """,
+        (
+            name, region, country,
+            latitude, longitude,
+            environment_id, entry_id,
+            max_depth_m,
+            description, description_wildlife, notes,
+            site_id,
+        ),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"No site with id {site_id}")
+
+
+def delete(conn: sqlite3.Connection, site_id: int) -> None:
+    """Delete a site. Raises LookupError if id not found.
+
+    Note: dive_site has ON DELETE RESTRICT, so if any dive references
+    this site the FK will reject the delete with an IntegrityError.
+    The UI catches that and tells the user which dives are blocking
+    the delete.
+    """
+    cur = conn.execute("DELETE FROM site WHERE id = ?", (site_id,))
+    if cur.rowcount == 0:
+        raise LookupError(f"No site with id {site_id}")
+
+
+def list_blocking_dives(
+    conn: sqlite3.Connection, site_id: int
+) -> list[tuple[int, str]]:
+    """Return (dive_id, dive_date) for every dive that references this
+    site. Used to give the user a useful error when a delete is
+    blocked by the ON DELETE RESTRICT FK on dive_site."""
+    rows = conn.execute(
+        """
+        SELECT d.id, d.dive_date
+          FROM dive_site ds
+          JOIN dive d ON d.id = ds.dive_id
+         WHERE ds.site_id = ?
+         ORDER BY d.dive_date DESC, d.id DESC
+         LIMIT 10
+        """,
+        (site_id,),
+    ).fetchall()
+    return [(r["id"], r["dive_date"]) for r in rows]
