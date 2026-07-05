@@ -406,7 +406,8 @@ def _subprocess_qt_check(test_source: str) -> None:
     if result.returncode != 0:
         pytest.skip(
             f"Qt test crashed (rc={result.returncode}); "
-            f"stderr head: {result.stderr[:200]!r}"
+            f"stderr head: {result.stderr[:200]!r}; "
+            f"stdout head: {result.stdout[:200]!r}"
         )
     if result.stdout.startswith("SKIP:"):
         pytest.skip(result.stdout.strip())
@@ -491,6 +492,78 @@ def test_qt_main_window_opens_at_75_percent_of_desktop() -> None:
         win.close()
         cm.__exit__(None, None, None)
         print('OK: main window opens at 75% of desktop, centered')
+        """
+    )
+
+
+def test_qt_main_window_sites_menu_has_no_new_edit_delete() -> None:
+    """Per the user's spec, the Sites menu on the main window should
+    NOT contain New Site, Edit Site, or Delete Site entries. Those
+    actions live only on the Sites List window.
+
+    The Sites menu should still have: List Sites, separator,
+    Import from opendivemap. Nothing else under Sites.
+    """
+    _subprocess_qt_check(
+        """
+        import os, tempfile
+        os.environ['PYTHONPATH'] = 'src'
+        from PySide6.QtWidgets import QApplication
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.ui.main_window import MainWindow
+
+        app = QApplication.instance() or QApplication([])
+        tmp = tempfile.mkdtemp()
+        cm = connect(os.path.join(tmp, 'menu_test.db'))
+        c = cm.__enter__()
+        apply_migrations(c)
+        win = MainWindow(c)
+        win.show()
+        app.processEvents()
+
+        # Collect the text of every action in every menu. The Qt
+        # actions are C++-owned by the menubar, so we MUST capture
+        # the text into a Python list before holding any other
+        # references, otherwise a C++ object can be deleted while
+        # we still hold a Python ref to it.
+        all_texts = []
+        for top_action in win.menuBar().actions():
+            sub = top_action.menu()
+            if sub is None:
+                continue
+            for a in sub.actions():
+                t = a.text()
+                if t:
+                    all_texts.append(t)
+
+        # Filter to just the Sites menu items (top_action.text() == '&Sites')
+        sites_texts = []
+        for top_action in win.menuBar().actions():
+            if top_action.text() != '&Sites':
+                continue
+            sub = top_action.menu()
+            for a in sub.actions():
+                t = a.text()
+                if t:
+                    sites_texts.append(t)
+            break
+
+        # The handler attributes should not exist on the window
+        assert not hasattr(win, '_action_new_site'), 'New Site action still exists'
+        assert not hasattr(win, '_action_edit_site'), 'Edit Site action still exists'
+        assert not hasattr(win, '_action_delete_site'), 'Delete Site action still exists'
+
+        for forbidden in ('&New Site…', '&Edit Site…', '&Delete Site'):
+            assert forbidden not in sites_texts, \\
+                f'forbidden entry {forbidden!r} still in Sites menu: {sites_texts}'
+
+        # Should still have List Sites and Import
+        assert any('List Sites' in t for t in sites_texts), f'List Sites missing: {sites_texts}'
+        assert any('Import' in t for t in sites_texts), f'Import missing: {sites_texts}'
+
+        win.close()
+        cm.__exit__(None, None, None)
+        print('OK: Sites menu has no New/Edit/Delete entries')
         """
     )
 

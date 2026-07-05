@@ -207,16 +207,11 @@ class MainWindow(QMainWindow):
         self._action_import_sites.triggered.connect(self._start_opendivemap_import)
         sites_menu.addAction(self._action_import_sites)
 
-        sites_menu.addSeparator()
-        self._action_new_site = QAction("&New Site…", self)
-        self._action_new_site.triggered.connect(self._on_new_site)
-        sites_menu.addAction(self._action_new_site)
-        self._action_edit_site = QAction("&Edit Site…", self)
-        self._action_edit_site.triggered.connect(self._on_edit_site)
-        sites_menu.addAction(self._action_edit_site)
-        self._action_delete_site = QAction("&Delete Site", self)
-        self._action_delete_site.triggered.connect(self._on_delete_site)
-        sites_menu.addAction(self._action_delete_site)
+        # Note: New / Edit / Delete site actions were removed from this
+        # menu per user spec. They now live only on the Sites List
+        # window (toolbar + right-click). The handler methods
+        # (_on_new_site / _on_edit_site / _on_delete_site) are also
+        # removed; the list window owns those flows now.
 
         # --- Certifications ---
         certs_menu = bar.addMenu("&Certifications")
@@ -411,80 +406,6 @@ class MainWindow(QMainWindow):
         """If the sites list window is open, reload it from the DB."""
         if self._sites_window is not None:
             self._sites_window.refresh()
-
-    def _on_new_site(self) -> None:
-        from open_dive_log.ui.site_add_edit_dialog import (
-            SiteAddEditDialog, SubmittedSite,
-        )
-        from open_dive_log.repositories import sites as sites_repo
-        dlg = SiteAddEditDialog(self._conn, site=None, parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        sub: SubmittedSite = dlg.submitted()
-        assert sub is not None
-        try:
-            site = sites_repo.find_or_create(
-                self._conn, sub.name,
-                region=sub.region,
-                country=sub.country,
-                country_code=sub.country_code,
-                latitude=sub.latitude,
-                longitude=sub.longitude,
-                environment_id=sub.environment_id,
-                entry_id=sub.entry_id,
-                max_depth_m=sub.max_depth_m,
-                description=sub.description,
-                description_wildlife=sub.description_wildlife,
-                notes=sub.notes,
-            )
-        except sqlite3.IntegrityError as e:
-            QMessageBox.critical(
-                self, "Save failed",
-                f"Could not create the site — likely a duplicate "
-                f"(name, country) combination.\n\n{e}",
-            )
-            return
-        self._refresh_sites_window()
-        self.statusBar().showMessage(f"Created site #{site.id}: {site.name}", 5000)
-
-    def _on_edit_site(self) -> None:
-        """Edit the selected row in the Sites List window.
-
-        If the list window isn't open, open it and tell the user to
-        pick a row. (We don't fall back to a QInputDialog picker
-        anymore — the user's spec is that the actions live on the
-        list page, with a search box for finding sites quickly.)
-        """
-        if self._sites_window is None or not self._sites_window.isVisible():
-            self._open_sites_window()
-            self.statusBar().showMessage(
-                "Open the Sites list, type to filter, and select a row to edit.",
-                5000,
-            )
-            return
-        if not self._sites_window.edit_selected():
-            # The list window is open but no row is selected
-            self.statusBar().showMessage(
-                "Select a site in the list to edit.", 5000,
-            )
-            self._sites_window.activateWindow()
-            self._sites_window._table.setFocus()
-
-    def _on_delete_site(self) -> None:
-        """Delete the selected row in the Sites List window."""
-        if self._sites_window is None or not self._sites_window.isVisible():
-            self._open_sites_window()
-            self.statusBar().showMessage(
-                "Open the Sites list, type to filter, and select a row to delete.",
-                5000,
-            )
-            return
-        if not self._sites_window.delete_selected():
-            self.statusBar().showMessage(
-                "Select a site in the list to delete.", 5000,
-            )
-            self._sites_window.activateWindow()
-            self._sites_window._table.setFocus()
 
     def _open_certs_window(self) -> None:
         if self._certs_window is None:

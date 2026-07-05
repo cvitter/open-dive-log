@@ -319,6 +319,7 @@ class SitesListWindow(QMainWindow):
                 name=sub.name,
                 region=sub.region,
                 country=sub.country,
+                country_code=sub.country_code,
                 latitude=sub.latitude,
                 longitude=sub.longitude,
                 environment_id=sub.environment_id,
