@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from open_dive_log.repositories import lookups, sites as sites_repo
+from open_dive_log.units import UnitSystem, ft_to_m, m_to_ft
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,10 @@ class SiteAddEditDialog(QDialog):
         The site to edit. Pass None to create a new site.
     parent : QWidget | None
         Optional parent for modality.
+    unit_system : UnitSystem
+        Which unit system to display distances in. The max-depth
+        spinbox's suffix and range follow the system; the form
+        converts back to meters at save time.
     """
 
     def __init__(
@@ -77,11 +82,13 @@ class SiteAddEditDialog(QDialog):
         conn: sqlite3.Connection,
         site: sites_repo.Site | None = None,
         parent: QWidget | None = None,
+        unit_system: UnitSystem = UnitSystem.METRIC,
     ) -> None:
         super().__init__(parent)
         self._conn = conn
         self._site = site
         self._submitted: SubmittedSite | None = None
+        self._units: UnitSystem = unit_system
 
         self.setWindowTitle("Edit Site" if site else "New Site")
         self.setModal(True)
@@ -168,11 +175,21 @@ class SiteAddEditDialog(QDialog):
         form.addRow("Entry:", self._entry)
 
         depth = QDoubleSpinBox()
-        depth.setRange(0.0, 200.0)
+        if self._units == UnitSystem.IMPERIAL:
+            # Up to ~700 ft covers any recreational dive site
+            depth.setRange(0.0, 700.0)
+            depth.setSuffix(" ft")
+        else:
+            # Up to 200 m covers any recreational dive site. The DB
+            # has no CHECK on site.max_depth_m, but 200 m is a sane
+            # upper bound.
+            depth.setRange(0.0, 200.0)
+            depth.setSuffix(" m")
         depth.setDecimals(1)
-        depth.setSuffix(" m")
         if site and site.max_depth_m is not None:
-            depth.setValue(site.max_depth_m)
+            # Convert DB meters to the displayed unit
+            display = m_to_ft(site.max_depth_m) if self._units == UnitSystem.IMPERIAL else site.max_depth_m
+            depth.setValue(display)
         self._max_depth = depth
         form.addRow("Max depth:", self._max_depth)
 
@@ -248,6 +265,17 @@ class SiteAddEditDialog(QDialog):
         text = text.strip()
         return text or None
 
+    def _read_max_depth_m(self) -> float | None:
+        """Read the max-depth spinbox, returning meters regardless of
+        the current display unit. Returns None if the value is 0
+        (treats 0 as 'unspecified', matching the rest of the form)."""
+        raw = self._max_depth.value()
+        if not raw:
+            return None
+        if self._units == UnitSystem.IMPERIAL:
+            return ft_to_m(raw)
+        return raw
+
     # --------------------------------------------------------- save handler
     def _on_save(self) -> None:
         name = self._clean(self._name.text())
@@ -285,7 +313,9 @@ class SiteAddEditDialog(QDialog):
             longitude=self._longitude.value() or None,
             environment_id=self._combo_id(self._environment),
             entry_id=self._combo_id(self._entry),
-            max_depth_m=self._max_depth.value() or None,
+            # The spinbox displays in the current unit system; convert
+            # back to meters (the canonical DB unit) on save.
+            max_depth_m=self._read_max_depth_m(),
             description=self._clean(self._description.toPlainText()),
             description_wildlife=self._clean(self._description_wildlife.toPlainText()),
             notes=self._clean(self._notes.toPlainText()),

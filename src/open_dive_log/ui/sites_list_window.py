@@ -26,12 +26,18 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QTableView,
     QToolBar,
+    QWidget,
 )
 
 from open_dive_log.repositories import sites as sites_repo
+from open_dive_log.units import UnitSystem, m_to_ft
 
 
-HEADERS: tuple[tuple[str, str], ...] = (
+# (column index, header, tooltip, applies_to_max_depth)
+# The "Max depth" column is the only unit-bearing column in this table.
+# The header is built dynamically from the current unit system, so
+# this constant is a placeholder that's overridden at runtime.
+HEADERS_METRIC: tuple[tuple[str, str], ...] = (
     ("Name", "Site name"),
     ("Country", "Country name (ISO 3166-1 alpha-2)"),
     ("Region", "Free-text region / area"),
@@ -39,15 +45,36 @@ HEADERS: tuple[tuple[str, str], ...] = (
     ("Environment", "Where the dive happens (ocean, lake, etc.)"),
     ("Entry", "How divers enter the water (shore, boat, other)"),
 )
+HEADERS_IMPERIAL: tuple[tuple[str, str], ...] = (
+    ("Name", "Site name"),
+    ("Country", "Country name (ISO 3166-1 alpha-2)"),
+    ("Region", "Free-text region / area"),
+    ("Max depth (ft)", "Maximum depth for this site, in feet"),
+    ("Environment", "Where the dive happens (ocean, lake, etc.)"),
+    ("Entry", "How divers enter the water (shore, boat, other)"),
+)
+COL_MAX_DEPTH = 3
+
+
+def _build_headers(system: UnitSystem) -> tuple[tuple[str, str], ...]:
+    """Return the column headers for the given unit system.
+
+    Only the Max depth column changes between metric and imperial;
+    the other columns are unit-less.
+    """
+    if system == UnitSystem.IMPERIAL:
+        return HEADERS_IMPERIAL
+    return HEADERS_METRIC
 
 
 class SiteTableModel(QAbstractTableModel):
     """Loads sites via `sites_repo.list_all` and exposes them as a table.
 
-    Supports a name-substring filter (`set_filter`). The filter is
-    case-insensitive substring match against the `name` field. The
-    underlying data (`_all_rows`) is preserved; `_rows` is the
-    filtered view. `set_rows` resets the filter to "show all".
+    Supports a name-substring filter (`set_filter`) and a unit
+    system (`set_unit_system`). The filter is case-insensitive
+    substring match against the `name` field. The underlying data
+    (`_all_rows`) is preserved; `_rows` is the filtered view.
+    `set_rows` resets the filter to "show all".
     """
 
     def __init__(self, parent=None) -> None:
@@ -55,6 +82,8 @@ class SiteTableModel(QAbstractTableModel):
         self._all_rows: list[sites_repo.Site] = []
         self._rows: list[sites_repo.Site] = []
         self._filter: str = ""
+        self._units: UnitSystem = UnitSystem.METRIC
+        self._headers: tuple[tuple[str, str], ...] = _build_headers(self._units)
 
     def set_rows(self, rows: Iterable[sites_repo.Site]) -> None:
         """Replace the underlying data and reset the filter."""
@@ -101,14 +130,31 @@ class SiteTableModel(QAbstractTableModel):
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
         if parent.isValid():
             return 0
-        return len(HEADERS)
+        return len(self._headers)
+
+    def set_unit_system(self, system: UnitSystem) -> None:
+        """Switch the displayed unit for the max-depth column.
+
+        No-op if the system hasn't changed. The headers AND the
+        max-depth cell values are both rebuilt under beginResetModel
+        so the view repaints cleanly.
+        """
+        if system == self._units:
+            return
+        self.beginResetModel()
+        self._units = system
+        self._headers = _build_headers(system)
+        self.endResetModel()
+
+    def unit_system(self) -> UnitSystem:
+        return self._units
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole):
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         if orientation == Qt.Orientation.Horizontal:
-            if 0 <= section < len(HEADERS):
-                return HEADERS[section][0]
+            if 0 <= section < len(self._headers):
+                return self._headers[section][0]
         elif orientation == Qt.Orientation.Vertical:
             return section + 1
         return None
@@ -126,22 +172,28 @@ class SiteTableModel(QAbstractTableModel):
                 return row.country_name or row.country_code or ""
             if col == 2:
                 return row.region or ""
-            if col == 3:
+            if col == COL_MAX_DEPTH:
                 if row.max_depth_m is None:
                     return ""
-                if row.max_depth_m == int(row.max_depth_m):
-                    return f"{int(row.max_depth_m)}"
-                return f"{row.max_depth_m:.1f}"
+                # Convert at display time, mirror the dive list's pattern
+                value = (
+                    m_to_ft(row.max_depth_m)
+                    if self._units == UnitSystem.IMPERIAL
+                    else row.max_depth_m
+                )
+                if value == int(value):
+                    return f"{int(value)}"
+                return f"{value:.1f}"
             if col == 4:
                 return row.environment_name or ""
             if col == 5:
                 return row.entry_name or ""
 
         if role == Qt.ItemDataRole.ToolTipRole:
-            if 0 <= col < len(HEADERS):
-                return HEADERS[col][1]
+            if 0 <= col < len(self._headers):
+                return self._headers[col][1]
 
-        if role == Qt.ItemDataRole.TextAlignmentRole and col == 3:
+        if role == Qt.ItemDataRole.TextAlignmentRole and col == COL_MAX_DEPTH:
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         return None
@@ -168,7 +220,12 @@ class SitesListWindow(QMainWindow):
 
     DEFAULT_LIMIT = 5000
 
-    def __init__(self, conn: sqlite3.Connection, parent=None) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        parent: QWidget | None = None,
+        unit_system: UnitSystem = UnitSystem.METRIC,
+    ) -> None:
         super().__init__(parent)
         self._conn = conn
 
@@ -176,6 +233,7 @@ class SitesListWindow(QMainWindow):
         self.resize(900, 600)
 
         self._model = SiteTableModel(self)
+        self._model.set_unit_system(unit_system)
         self._table = QTableView(self)
         self._table.setModel(self._model)
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
@@ -236,6 +294,12 @@ class SitesListWindow(QMainWindow):
         self.refresh()
 
     # ------------------------------------------------------------------ API
+    def set_unit_system(self, system: UnitSystem) -> None:
+        """Forward the unit toggle to the model. Called by MainWindow
+        when the user picks Metric / Imperial from the View menu.
+        """
+        self._model.set_unit_system(system)
+
     def refresh(self) -> None:
         """Reload the sites from the DB. The current filter is preserved
         (so re-importing from opendivemap doesn't lose the user's
@@ -308,7 +372,10 @@ class SitesListWindow(QMainWindow):
         from open_dive_log.ui.site_add_edit_dialog import (
             SiteAddEditDialog, SubmittedSite,
         )
-        dlg = SiteAddEditDialog(self._conn, site=site, parent=self)
+        dlg = SiteAddEditDialog(
+            self._conn, site=site, parent=self,
+            unit_system=self._model.unit_system(),
+        )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         sub: SubmittedSite = dlg.submitted()

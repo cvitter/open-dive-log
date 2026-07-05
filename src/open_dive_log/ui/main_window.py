@@ -303,6 +303,10 @@ class MainWindow(QMainWindow):
                 "remembered for the next launch.",
             )
         self._model.set_unit_system(new_units)
+        # If the Sites List window is open, propagate the unit toggle
+        # to it as well (it shows Max depth in m or ft).
+        if self._sites_window is not None:
+            self._sites_window.set_unit_system(new_units)
         label = "Imperial (°F, ft)" if new_units == UnitSystem.IMPERIAL else "Metric (°C, m)"
         self.statusBar().showMessage(f"Units: {label}", 5000)
 
@@ -397,7 +401,10 @@ class MainWindow(QMainWindow):
 
     def _open_sites_window(self) -> None:
         if self._sites_window is None:
-            self._sites_window = SitesListWindow(self._conn, parent=self)
+            self._sites_window = SitesListWindow(
+                self._conn, parent=self,
+                unit_system=preferences.get_units(),
+            )
         self._sites_window.show()
         self._sites_window.raise_()
         self._sites_window.activateWindow()

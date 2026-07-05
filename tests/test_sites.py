@@ -398,6 +398,220 @@ def test_site_table_model_set_rows_resets_filter() -> None:
 
 
 # ---------------------------------------------------------------------------
+# SiteTableModel: unit system
+# ---------------------------------------------------------------------------
+def test_site_table_model_metric_max_depth() -> None:
+    """In metric mode, the Max depth column shows meters (raw value)."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt
+    app = QApplication.instance() or QApplication([])
+
+    with tempfile.TemporaryDirectory() as d:
+        cm = db.connect(os.path.join(d, "depth_metric.db"))
+        c = cm.__enter__()
+        db.apply_migrations(c)
+        c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
+        c.commit()
+        try:
+            from open_dive_log.ui.sites_list_window import (
+                SiteTableModel, COL_MAX_DEPTH, _build_headers,
+            )
+            from open_dive_log.repositories import sites as sites_repo
+
+            s = sites_repo.find_or_create(c, "Salt Pier", country_code="BQ")
+            sites_repo.update(c, s.id, name="Salt Pier", max_depth_m=18.0)
+
+            model = SiteTableModel()
+            model.set_rows(sites_repo.list_all(c))
+            headers = _build_headers(model.unit_system())
+            assert headers[COL_MAX_DEPTH][0] == "Max depth (m)"
+
+            # Read the data cell for the max-depth column
+            from PySide6.QtCore import QModelIndex
+            idx = model.index(0, COL_MAX_DEPTH)
+            assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "18"
+        finally:
+            cm.__exit__(None, None, None)
+
+
+def test_site_table_model_imperial_max_depth_converts() -> None:
+    """In imperial mode, the Max depth column converts m → ft.
+
+    18 m = 59.0551... ft. The formatter shows integer values without
+    decimals and 1-decimal otherwise, so 59.06 → '59.1'.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt
+    app = QApplication.instance() or QApplication([])
+
+    with tempfile.TemporaryDirectory() as d:
+        cm = db.connect(os.path.join(d, "depth_imperial.db"))
+        c = cm.__enter__()
+        db.apply_migrations(c)
+        c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
+        c.commit()
+        try:
+            from open_dive_log.ui.sites_list_window import (
+                SiteTableModel, COL_MAX_DEPTH, _build_headers,
+            )
+            from open_dive_log.repositories import sites as sites_repo
+            from open_dive_log.units import UnitSystem
+
+            s = sites_repo.find_or_create(c, "Salt Pier", country_code="BQ")
+            sites_repo.update(c, s.id, name="Salt Pier", max_depth_m=18.0)
+
+            model = SiteTableModel()
+            model.set_rows(sites_repo.list_all(c))
+            model.set_unit_system(UnitSystem.IMPERIAL)
+            headers = _build_headers(model.unit_system())
+            assert headers[COL_MAX_DEPTH][0] == "Max depth (ft)"
+            from PySide6.QtCore import QModelIndex
+            idx = model.index(0, COL_MAX_DEPTH)
+            # 18 m = 59.0551... ft, formatted as '59.1'
+            assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "59.1"
+        finally:
+            cm.__exit__(None, None, None)
+
+
+def test_site_table_model_set_unit_system_is_noop_if_same() -> None:
+    """set_unit_system with the current system should be a no-op (it
+    still calls beginResetModel/endResetModel but the headers and
+    data don't change). We just verify no crash and the data is
+    unchanged."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+
+    with tempfile.TemporaryDirectory() as d:
+        cm = db.connect(os.path.join(d, "noop.db"))
+        c = cm.__enter__()
+        db.apply_migrations(c)
+        c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
+        c.commit()
+        try:
+            from open_dive_log.ui.sites_list_window import SiteTableModel
+            from open_dive_log.repositories import sites as sites_repo
+            from open_dive_log.units import UnitSystem
+
+            s = sites_repo.find_or_create(c, "Salt Pier", country_code="BQ")
+            sites_repo.update(c, s.id, name="Salt Pier", max_depth_m=18.0)
+
+            model = SiteTableModel()
+            model.set_rows(sites_repo.list_all(c))
+            current = model.unit_system()
+            model.set_unit_system(current)  # no-op
+            assert model.unit_system() == current
+            # Now switch and switch back
+            model.set_unit_system(UnitSystem.IMPERIAL)
+            model.set_unit_system(UnitSystem.METRIC)
+            assert model.unit_system() == UnitSystem.METRIC
+        finally:
+            cm.__exit__(None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# SiteAddEditDialog: unit-aware max depth
+# ---------------------------------------------------------------------------
+def test_site_dialog_max_depth_imperial_displays_and_converts() -> None:
+    """In imperial mode, the max-depth spinbox shows ft and converts
+    back to meters on save. 18 m = 59.0551... ft, displayed as 59.1.
+    After save, the repo stores 18.0 m (round-trip)."""
+    _assert_qt_ok(_run_qt_test(
+        """
+        import os
+        os.environ['PYTHONPATH'] = 'src'
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        from PySide6.QtCore import Qt
+        from PySide6.QtCore import QModelIndex
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.repositories import sites as sites_repo
+        from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
+        from open_dive_log.units import UnitSystem
+
+        app = QApplication.instance() or QApplication([])
+        QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+
+        cm = connect(':memory:')
+        c = cm.__enter__()
+        apply_migrations(c)
+        c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ('BQ', 'Bonaire'))
+        c.commit()
+        s = sites_repo.find_or_create(c, 'Salt Pier', country_code='BQ')
+        sites_repo.update(c, s.id, name='Salt Pier', max_depth_m=18.0)
+        s = sites_repo.get(c, s.id)  # re-fetch so max_depth_m is current
+
+        # Open in imperial mode
+        dlg = SiteAddEditDialog(c, site=s, unit_system=UnitSystem.IMPERIAL)
+        # Spinbox suffix should be ' ft'
+        assert dlg._max_depth.suffix() == ' ft', f'expected ft suffix, got {dlg._max_depth.suffix()!r}'
+        # 18 m = 59.0551... ft, displayed as 59.1 (1 decimal)
+        actual = dlg._max_depth.value()
+        assert abs(actual - 59.1) < 0.01, f'unexpected value {actual}'
+
+        # Set to 100 ft exactly and save
+        dlg._max_depth.setValue(100.0)
+        dlg._on_save()
+        sub = dlg.submitted()
+        assert sub is not None
+        # 100 ft = 30.48 m
+        assert abs(sub.max_depth_m - 30.48) < 0.01, f'unexpected m save {sub.max_depth_m}'
+
+        # Verify the repo got meters, not feet
+        after = sites_repo.get(c, s.id)
+        assert after.max_depth_m is not None
+        assert abs(after.max_depth_m - 30.48) < 0.01, f'expected ~30.48m in DB, got {after.max_depth_m}'
+
+        dlg.close()
+        cm.__exit__(None, None, None)
+        print('OK: form max-depth respects imperial units')
+        """
+    ))
+
+
+def test_site_dialog_max_depth_metric_passthrough() -> None:
+    """In metric mode, the spinbox shows meters and saves meters
+    (no conversion)."""
+    _assert_qt_ok(_run_qt_test(
+        """
+        import os
+        os.environ['PYTHONPATH'] = 'src'
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.repositories import sites as sites_repo
+        from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
+        from open_dive_log.units import UnitSystem
+
+        app = QApplication.instance() or QApplication([])
+        QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+
+        cm = connect(':memory:')
+        c = cm.__enter__()
+        apply_migrations(c)
+        c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ('BQ', 'Bonaire'))
+        c.commit()
+        s = sites_repo.find_or_create(c, 'Salt Pier', country_code='BQ')
+        sites_repo.update(c, s.id, name='Salt Pier', max_depth_m=18.0)
+        s = sites_repo.get(c, s.id)  # re-fetch so max_depth_m is current
+
+        dlg = SiteAddEditDialog(c, site=s, unit_system=UnitSystem.METRIC)
+        assert dlg._max_depth.suffix() == ' m', f'expected m suffix, got {dlg._max_depth.suffix()!r}'
+        assert dlg._max_depth.value() == 18.0
+
+        dlg._max_depth.setValue(25.0)
+        dlg._on_save()
+        sub = dlg.submitted()
+        assert sub.max_depth_m == 25.0
+
+        dlg.close()
+        cm.__exit__(None, None, None)
+        print('OK: form max-depth respects metric units')
+        """
+    ))
+
+
+# ---------------------------------------------------------------------------
 # SitesListWindow: edit/delete from selection
 # ---------------------------------------------------------------------------
 def test_sites_list_window_edit_from_selection_opens_dialog() -> None:
