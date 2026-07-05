@@ -86,17 +86,39 @@ def test_update_to_duplicate_name_country_raises(
     assert sites_repo.get(empty_db, b.id) is not None
 
 
-def test_update_does_not_change_country_code(
+def test_update_persists_country_code(
     empty_db: sqlite3.Connection,
 ) -> None:
-    """country_code is the modern, opendivemap-compatible key. It is
-    intentionally NOT in the update() signature — the form shouldn't
-    change it. This test pins that behavior."""
+    """country_code is now user-editable through the form. The
+    update() should persist any country_code the caller passes.
+
+    This test was named test_update_does_not_change_country_code
+    before; that pinning captured a bug — the form's country
+    picker was being silently dropped. The fix moved country_code
+    into the UPDATE statement.
+    """
     s = sites_repo.find_or_create(empty_db, "Salt Pier", country_code="BQ")
-    sites_repo.update(empty_db, s.id, name="Salt Pier", country="Bonaire")
+    # Change country_code from BQ to CW
+    sites_repo.update(
+        empty_db, s.id,
+        name="Salt Pier", country="Curaçao", country_code="CW",
+    )
     after = sites_repo.get(empty_db, s.id)
     assert after is not None
-    assert after.country_code == "BQ"  # unchanged
+    assert after.country_code == "CW"
+    assert after.country == "Curaçao"
+
+
+def test_update_can_clear_country_code(
+    empty_db: sqlite3.Connection,
+) -> None:
+    """If the user picks '(none)' in the form, country_code is set
+    to None. update() must accept and persist that."""
+    s = sites_repo.find_or_create(empty_db, "Salt Pier", country_code="BQ")
+    sites_repo.update(empty_db, s.id, name="Salt Pier", country_code=None)
+    after = sites_repo.get(empty_db, s.id)
+    assert after is not None
+    assert after.country_code is None
 
 
 # ---------------------------------------------------------------------------

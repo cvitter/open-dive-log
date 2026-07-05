@@ -313,15 +313,17 @@ def update(
     renames with a clear IntegrityError; the form catches that and
     shows the user what went wrong.
 
-    Note: country_code is intentionally NOT updated here. Country
-    code is the modern, opendivemap-compatible key and should be
-    stable once set. If a user really needs to change it, that's a
-    data import / migration concern, not a UI form concern.
+    country_code IS updated here. (Originally I planned to make it
+    immutable past the import path, but the form's country picker
+    needs to save it, and the field is meant to be user-editable
+    just like the free-text country. The FK to country(code) means
+    the form must only offer codes that exist; if the user picks a
+    code that's not in the country table, the FK will reject it.)
     """
     cur = conn.execute(
         """
         UPDATE site
-           SET name = ?, region = ?, country = ?,
+           SET name = ?, region = ?, country = ?, country_code = ?,
                latitude = ?, longitude = ?,
                environment_id = ?, entry_id = ?,
                max_depth_m = ?,
@@ -330,7 +332,7 @@ def update(
          WHERE id = ?
         """,
         (
-            name, region, country,
+            name, region, country, country_code,
             latitude, longitude,
             environment_id, entry_id,
             max_depth_m,
