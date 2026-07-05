@@ -617,8 +617,27 @@ class DiveAddEditDialog(QDialog):
         return self._make_depth_spin()  # same range, same suffix logic
 
     def _make_temp_spin(self) -> QDoubleSpinBox:
+        """Temperature spinbox whose range mirrors the DB CHECK constraint.
+
+        The DB CHECK is `air_temp_c BETWEEN -50 AND 60` and
+        `water_temp_c BETWEEN -2 AND 40`. To keep the form in sync
+        with those bounds in BOTH unit systems, we compute the
+        display-unit min/max from the imperial extremes (the more
+        intuitive end-user numbers: -58..140°F covers the DB's
+        -50..60°C range exactly).
+
+        NB: at the user's request the form cap is asymmetric —
+        120°F in imperial, 48.9°C in metric. The DB still accepts
+        up to 60°C, so a value entered through some other path
+        could exceed the form's cap. We round the metric cap DOWN
+        to 48.9 so the form can hold it as a clean display value.
+        """
         s = QDoubleSpinBox()
-        s.setRange(-50.0, 60.0)
+        if self._units == UnitSystem.IMPERIAL:
+            s.setRange(-58.0, 120.0)
+        else:
+            # -50°C = -58°F, 120°F = 48.888...°C, rounded down to 48.9
+            s.setRange(-50.0, 48.9)
         s.setDecimals(1)
         s.setSuffix(f" {self._temp_unit()}")
         return s

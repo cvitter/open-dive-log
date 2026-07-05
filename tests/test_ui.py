@@ -11,6 +11,7 @@ The UI has two kinds of code:
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -170,6 +171,88 @@ def test_table_model_headers_imperial() -> None:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Temperature spinbox range (per user spec: 120°F max in imperial)
+# ---------------------------------------------------------------------------
+def test_temp_spin_max_in_imperial_is_120F(conn: sqlite3.Connection) -> None:
+    """The form's air/water temp spinboxes must accept up to 120°F in
+    imperial mode. The form used to cap at 60 (which the user noted was
+    too low — desert diving can hit 50°C / 122°F). The DB CHECK still
+    allows up to 60°C, but the form is intentionally more restrictive
+    at the UI layer.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
+    from open_dive_log.units import UnitSystem
+
+    dlg = DiveAddEditDialog(conn, dive=None, unit_system=UnitSystem.IMPERIAL)
+    dlg.show()
+    app.processEvents()
+
+    # The dialog builds air_temp and water_temp in _build_conditions_section
+    air = dlg._air_temp
+    water = dlg._water_temp
+    assert air.maximum() == 120.0, f"air temp max was {air.maximum()}, expected 120.0"
+    assert water.maximum() == 120.0, f"water temp max was {water.maximum()}, expected 120.0"
+
+    # The user can now enter 120°F without the form rejecting it
+    air.setValue(120.0)
+    water.setValue(120.0)
+    app.processEvents()
+    assert air.value() == 120.0
+    assert water.value() == 120.0
+
+    dlg.close()
+
+
+def test_temp_spin_max_in_metric_is_48_9C(conn: sqlite3.Connection) -> None:
+    """In metric, the form cap is 48.9°C — the metric equivalent of
+    120°F (rounded down so the spinbox can hold it as a clean
+    display value). The DB still accepts up to 60°C; the form is
+    intentionally more restrictive at the UI layer.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
+    from open_dive_log.units import UnitSystem
+
+    dlg = DiveAddEditDialog(conn, dive=None, unit_system=UnitSystem.METRIC)
+    dlg.show()
+    app.processEvents()
+
+    air = dlg._air_temp
+    water = dlg._water_temp
+    assert air.maximum() == 48.9, f"air temp max was {air.maximum()}, expected 48.9"
+    assert water.maximum() == 48.9, f"water temp max was {water.maximum()}, expected 48.9"
+
+    dlg.close()
+
+
+def test_temp_spin_min_in_imperial_is_neg_58F(conn: sqlite3.Connection) -> None:
+    """The lower bound is -50°C in the DB, which is -58°F — the form
+    uses that in imperial mode so the spinbox range mirrors the DB
+    in both unit systems."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
+    from open_dive_log.units import UnitSystem
+
+    dlg = DiveAddEditDialog(conn, dive=None, unit_system=UnitSystem.IMPERIAL)
+    dlg.show()
+    app.processEvents()
+
+    assert dlg._air_temp.minimum() == -58.0
+    assert dlg._water_temp.minimum() == -58.0
+    dlg.close()
+
+
+# ---------------------------------------------------------------------------
+# Pressure fields (migration 006)
+# ---------------------------------------------------------------------------
 def test_load_rows_includes_pressure_and_avg_depth(tmp_path: Path) -> None:
     """The DiveRow dataclass must carry all 10 columns' data from the DB.
 
