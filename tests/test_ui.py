@@ -81,16 +81,25 @@ def test_load_rows_empty_db(tmp_path: Path) -> None:
         cm.__exit__(None, None, None)
 
 
-def test_load_rows_orders_by_date_desc(conn: sqlite3.Connection) -> None:
-    # The fixture already has a 2026-07-04 dive. Add three more and confirm
-    # the order: newest first, with the fixture dive ending up in the right slot.
+def test_load_rows_orders_by_id_desc(conn: sqlite3.Connection) -> None:
+    """The list is sorted by dive id DESC — the latest inserted dive
+    (highest id, which the user calls Dive #) is at the top of the
+    list. Insertion order in the test is:
+        1. fixture dive (2026-07-04)
+        2. 2026-07-01
+        3. 2026-07-15
+        4. 2026-07-08
+    So sorted by id DESC: 4, 3, 2, 1 = 07-08, 07-15, 07-01, 07-04.
+    """
     dives.create(conn, dive_date="2026-07-01", max_depth_m=10.0)
     dives.create(conn, dive_date="2026-07-15", max_depth_m=20.0)
     dives.create(conn, dive_date="2026-07-08", max_depth_m=15.0)
     rows = dive_table_model.load_rows(conn)
     assert [r.dive_date for r in rows] == [
-        "2026-07-15", "2026-07-08", "2026-07-04", "2026-07-01",
+        "2026-07-08", "2026-07-15", "2026-07-01", "2026-07-04",
     ]
+    # And the Dive # column matches the row order — top row has the highest id.
+    assert [r.id for r in rows] == [4, 3, 2, 1]
 
 
 def test_format_depth() -> None:
@@ -427,6 +436,48 @@ def test_qt_main_window_constructs() -> None:
         win.close()
         cm.__exit__(None, None, None)
         print('OK: main window constructed and assertions passed')
+        """
+    )
+
+
+def test_qt_main_window_opens_at_75_percent_of_desktop() -> None:
+    """Per the user's spec, the main window should open at 75% of the
+    primary screen's available area (excluding the menu bar/dock),
+    centered. We assert the geometry is within 1% of the target so
+    floating-point rounding doesn't make the test flaky.
+    """
+    _subprocess_qt_check(
+        """
+        from open_dive_log.db import connect, apply_migrations
+        from open_dive_log.ui.main_window import MainWindow
+        from PySide6.QtGui import QGuiApplication
+
+        cm = connect(':memory:')
+        conn = cm.__enter__()
+        apply_migrations(conn)
+
+        win = MainWindow(conn=conn)
+        screen = QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry()
+        target_w = int(avail.width() * 0.75)
+        target_h = int(avail.height() * 0.75)
+
+        actual = win.geometry()
+        # Allow a 1% tolerance for rounding / OS decorations
+        tol = max(target_w, target_h) // 100
+        assert abs(actual.width()  - target_w) <= tol, f'width {actual.width()} != ~{target_w}'
+        assert abs(actual.height() - target_h) <= tol, f'height {actual.height()} != ~{target_h}'
+        # Centered: window's center should be within tol of the screen's center
+        cx = actual.x() + actual.width() // 2
+        cy = actual.y() + actual.height() // 2
+        ax = avail.x() + avail.width() // 2
+        ay = avail.y() + avail.height() // 2
+        assert abs(cx - ax) <= tol, f'window not horizontally centered (cx={cx}, ax={ax})'
+        assert abs(cy - ay) <= tol, f'window not vertically centered (cy={cy}, ay={ay})'
+
+        win.close()
+        cm.__exit__(None, None, None)
+        print('OK: main window opens at 75% of desktop, centered')
         """
     )
 

@@ -324,7 +324,7 @@ def list_recent_with_sites(
         LEFT JOIN dive_site ds ON ds.dive_id = d.id
         LEFT JOIN site s ON s.id = ds.site_id
         GROUP BY d.id
-        ORDER BY d.dive_date DESC, d.start_time DESC
+        ORDER BY d.id DESC
         LIMIT ?
         """,
         (limit,),

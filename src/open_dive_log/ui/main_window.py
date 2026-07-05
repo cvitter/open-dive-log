@@ -98,7 +98,24 @@ class MainWindow(QMainWindow):
             self._schema_version = "?"
 
         self.setWindowTitle("Open Dive Log")
-        self.resize(900, 600)
+        # Open at 75% of the available desktop area, centered. The
+        # available area excludes the OS menu bar and dock, so the
+        # window doesn't accidentally land under the menu bar.
+        # We use QScreen.availableGeometry() rather than screenGeometry()
+        # for the dock/menubar exclusion. If the app is launched on a
+        # multi-monitor setup, the window goes on the primary screen.
+        from PySide6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            w = int(avail.width() * 0.75)
+            h = int(avail.height() * 0.75)
+            x = avail.x() + (avail.width() - w) // 2
+            y = avail.y() + (avail.height() - h) // 2
+            self.setGeometry(x, y, w, h)
+        else:
+            # Headless test environment: fall back to a sensible default.
+            self.resize(900, 600)
 
         # --- Central widget: the dive list --------------------------------
         self._model = DiveTableModel(self)
