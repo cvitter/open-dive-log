@@ -746,7 +746,12 @@ class DiveAddEditDialog(QDialog):
 
     def _on_buddy_add_clicked(self) -> None:
         buddy_id = self._buddies_picker.currentData()
-        if buddy_id is None:
+        # If the picker is empty (no buddies in the DB) or no selection,
+        # the user clearly wants to add a NEW buddy — launch the inline
+        # create flow rather than silently doing nothing. This makes
+        # "Add" always do something useful.
+        if buddy_id is None or self._buddies_picker.count() == 0:
+            self._on_buddy_create_clicked()
             return
         full_name = self._buddies_picker.currentText()
         # Don't add twice

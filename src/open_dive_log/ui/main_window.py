@@ -49,6 +49,7 @@ from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
 from open_dive_log.ui.dive_detail_dialog import DiveDetailDialog
 from open_dive_log.ui.dive_table_model import DiveTableModel, load_rows
 from open_dive_log.ui.sites_list_window import SitesListWindow
+from open_dive_log.ui.buddies_list_window import BuddiesListWindow
 
 
 class _ImportWorker(QObject):
@@ -153,6 +154,7 @@ class MainWindow(QMainWindow):
 
         # --- Child windows we keep references to (so they don't get GC'd) -
         self._sites_window: SitesListWindow | None = None
+        self._buddies_window: BuddiesListWindow | None = None
         self._certs_window: CertListWindow | None = None
 
         # Initial population.
@@ -212,6 +214,13 @@ class MainWindow(QMainWindow):
         # window (toolbar + right-click). The handler methods
         # (_on_new_site / _on_edit_site / _on_delete_site) are also
         # removed; the list window owns those flows now.
+
+        # --- Buddies ---
+        buddies_menu = bar.addMenu("&Buddies")
+        action_list_buddies = QAction("&List Buddies…", self)
+        action_list_buddies.setShortcut(QKeySequence("Ctrl+Shift+B"))
+        action_list_buddies.triggered.connect(self._open_buddies_window)
+        buddies_menu.addAction(action_list_buddies)
 
         # --- Certifications ---
         certs_menu = bar.addMenu("&Certifications")
@@ -341,6 +350,10 @@ class MainWindow(QMainWindow):
             if self._model.row_at(r) and self._model.row_at(r).id == new_id:
                 self._table.selectRow(r)
                 break
+        # Refresh child windows so they show the new buddy
+        # (in case the user created a buddy inline in the dive form)
+        if self._buddies_window is not None:
+            self._buddies_window.refresh()
         self.statusBar().showMessage(f"Added dive #{new_id}", 5000)
 
     def _on_edit_dive(self) -> None:
@@ -420,6 +433,13 @@ class MainWindow(QMainWindow):
         self._certs_window.show()
         self._certs_window.raise_()
         self._certs_window.activateWindow()
+
+    def _open_buddies_window(self) -> None:
+        if self._buddies_window is None:
+            self._buddies_window = BuddiesListWindow(self._conn, parent=self)
+        self._buddies_window.show()
+        self._buddies_window.raise_()
+        self._buddies_window.activateWindow()
 
     def _start_opendivemap_import(self) -> None:
         # Confirm first — the import takes a couple of minutes.
