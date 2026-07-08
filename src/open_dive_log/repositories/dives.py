@@ -281,6 +281,81 @@ def list_recent(conn: sqlite3.Connection, limit: int = 50) -> list[Dive]:
     ]
 
 
+@dataclass(frozen=True, slots=True)
+class DiveStats:
+    """Aggregated dive-book statistics for the Stats screen.
+
+    All time fields are minutes. All depth fields are meters — the
+    UI converts to the user's unit system on display. Distinct-sites
+    and distinct-countries count dives with a site attached (sites
+    without a country_code or in a country with no name still count
+    toward the site total but not toward the country total).
+
+    `dive_count` is the total number of dive rows; `dive_time_count`
+    is how many have a non-NULL `dive_time_minutes` (so avg/total/min/
+    max ignore dives with no time recorded).
+    """
+    dive_count: int
+    dive_time_count: int
+    longest_minutes: int | None
+    shortest_minutes: int | None
+    average_minutes: float | None
+    total_minutes: int | None
+    deepest_m: float | None
+    average_depth_m: float | None
+    distinct_sites: int
+    distinct_countries: int
+
+
+def compute_stats(conn: sqlite3.Connection) -> DiveStats:
+    """Run the aggregation queries for the Stats screen.
+
+    Each subquery is independent; we don't try to fold them into a
+    single SELECT (SQLite supports that, but the result is harder to
+    read and the per-statement cost is tiny at this scale).
+    """
+    # Time aggregates (only dives with a recorded time)
+    time_row = conn.execute(
+        "SELECT COUNT(*) AS c, MIN(dive_time_minutes) AS lo, "
+        "       MAX(dive_time_minutes) AS hi, AVG(dive_time_minutes) AS avg, "
+        "       SUM(dive_time_minutes) AS total "
+        "FROM dive WHERE dive_time_minutes IS NOT NULL"
+    ).fetchone()
+
+    # Depth aggregates — max is "deepest"; avg is "average dive depth"
+    depth_row = conn.execute(
+        "SELECT MAX(max_depth_m) AS deepest, AVG(max_depth_m) AS avg_depth "
+        "FROM dive WHERE max_depth_m IS NOT NULL"
+    ).fetchone()
+
+    # Total dive count (including dives with no time recorded)
+    dive_count = int(conn.execute("SELECT COUNT(*) AS c FROM dive").fetchone()["c"])
+
+    # Distinct sites and distinct countries the diver has been to.
+    # "Countries" counts dive-site links where the site has a
+    # country_code (NULL country_code sites don't count as a country
+    # but do count toward the site total).
+    site_row = conn.execute(
+        "SELECT COUNT(DISTINCT ds.site_id) AS sites, "
+        "       COUNT(DISTINCT CASE WHEN s.country_code IS NOT NULL "
+        "                          THEN s.country_code END) AS countries "
+        "FROM dive_site ds JOIN site s ON s.id = ds.site_id"
+    ).fetchone()
+
+    return DiveStats(
+        dive_count=dive_count,
+        dive_time_count=int(time_row["c"]) if time_row["c"] is not None else 0,
+        longest_minutes=int(time_row["hi"]) if time_row["hi"] is not None else None,
+        shortest_minutes=int(time_row["lo"]) if time_row["lo"] is not None else None,
+        average_minutes=float(time_row["avg"]) if time_row["avg"] is not None else None,
+        total_minutes=int(time_row["total"]) if time_row["total"] is not None else None,
+        deepest_m=float(depth_row["deepest"]) if depth_row["deepest"] is not None else None,
+        average_depth_m=float(depth_row["avg_depth"]) if depth_row["avg_depth"] is not None else None,
+        distinct_sites=int(site_row["sites"]) if site_row["sites"] is not None else 0,
+        distinct_countries=int(site_row["countries"]) if site_row["countries"] is not None else 0,
+    )
+
+
 def list_recent_with_sites(
     conn: sqlite3.Connection, limit: int = 500
 ) -> list[dict]:

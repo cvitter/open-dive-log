@@ -454,8 +454,8 @@ def test_qt_main_window_constructs() -> None:
     )
 
 
-def test_qt_main_window_opens_at_75_percent_of_desktop() -> None:
-    """Per the user's spec, the main window should open at 75% of the
+def test_qt_main_window_opens_at_85_percent_of_desktop() -> None:
+    """Per the user's spec, the main window should open at 85% of the
     primary screen's available area (excluding the menu bar/dock),
     centered. We assert the geometry is within 1% of the target so
     floating-point rounding doesn't make the test flaky.
@@ -473,8 +473,8 @@ def test_qt_main_window_opens_at_75_percent_of_desktop() -> None:
         win = MainWindow(conn=conn)
         screen = QGuiApplication.primaryScreen()
         avail = screen.availableGeometry()
-        target_w = int(avail.width() * 0.75)
-        target_h = int(avail.height() * 0.75)
+        target_w = int(avail.width() * 0.85)
+        target_h = int(avail.height() * 0.85)
 
         actual = win.geometry()
         # Allow a 1% tolerance for rounding / OS decorations
@@ -491,7 +491,7 @@ def test_qt_main_window_opens_at_75_percent_of_desktop() -> None:
 
         win.close()
         cm.__exit__(None, None, None)
-        print('OK: main window opens at 75% of desktop, centered')
+        print('OK: main window opens at 85% of desktop, centered')
         """
     )
 

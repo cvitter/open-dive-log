@@ -50,6 +50,7 @@ from open_dive_log.ui.dive_detail_dialog import DiveDetailDialog
 from open_dive_log.ui.dive_table_model import DiveTableModel, load_rows
 from open_dive_log.ui.sites_list_window import SitesListWindow
 from open_dive_log.ui.buddies_list_window import BuddiesListWindow
+from open_dive_log.ui.stats_window import StatsWindow
 
 
 class _ImportWorker(QObject):
@@ -100,7 +101,7 @@ class MainWindow(QMainWindow):
             self._schema_version = "?"
 
         self.setWindowTitle("Open Dive Log")
-        # Open at 75% of the available desktop area, centered. The
+        # Open at 85% of the available desktop area, centered. The
         # available area excludes the OS menu bar and dock, so the
         # window doesn't accidentally land under the menu bar.
         # We use QScreen.availableGeometry() rather than screenGeometry()
@@ -110,8 +111,8 @@ class MainWindow(QMainWindow):
         screen = QGuiApplication.primaryScreen()
         if screen is not None:
             avail = screen.availableGeometry()
-            w = int(avail.width() * 0.75)
-            h = int(avail.height() * 0.75)
+            w = int(avail.width() * 0.85)
+            h = int(avail.height() * 0.85)
             x = avail.x() + (avail.width() - w) // 2
             y = avail.y() + (avail.height() - h) // 2
             self.setGeometry(x, y, w, h)
@@ -156,6 +157,7 @@ class MainWindow(QMainWindow):
         self._sites_window: SitesListWindow | None = None
         self._buddies_window: BuddiesListWindow | None = None
         self._certs_window: CertListWindow | None = None
+        self._stats_window: StatsWindow | None = None
 
         # Initial population.
         self._refresh_dive_list()
@@ -263,6 +265,14 @@ class MainWindow(QMainWindow):
         # initial list view is rendered in the user's chosen unit.
         self._model.set_unit_system(initial_units)
         self._unit_group.triggered.connect(self._on_units_changed)
+        # Stats screen: lives on the View menu, under the units
+        # toggle. The dive log's key aggregates — count, time
+        # totals, deepest/avg depth, distinct sites/countries.
+        view_menu.addSeparator()
+        action_show_stats = QAction("Show &Stats…", self)
+        action_show_stats.setShortcut(QKeySequence("Ctrl+T"))
+        action_show_stats.triggered.connect(self._open_stats_window)
+        view_menu.addAction(action_show_stats)
 
         # --- Help ---
         help_menu = bar.addMenu("&Help")
@@ -282,6 +292,10 @@ class MainWindow(QMainWindow):
             f"schema v{self._schema_version}",
             5000,
         )
+        # Refresh the Stats window too, so its aggregates stay
+        # current with the latest dive add/edit/delete. No-op if
+        # the stats window has never been opened.
+        self._refresh_stats_window()
 
     def _on_units_changed(self, action: QAction) -> None:
         """Handle the View > Units toggle.
@@ -316,6 +330,10 @@ class MainWindow(QMainWindow):
         # to it as well (it shows Max depth in m or ft).
         if self._sites_window is not None:
             self._sites_window.set_unit_system(new_units)
+        # Same for the Stats window — its depth rows are in m or ft
+        # depending on the toggle.
+        if self._stats_window is not None:
+            self._stats_window.set_unit_system(new_units)
         label = "Imperial (°F, ft)" if new_units == UnitSystem.IMPERIAL else "Metric (°C, m)"
         self.statusBar().showMessage(f"Units: {label}", 5000)
 
@@ -440,6 +458,25 @@ class MainWindow(QMainWindow):
         self._buddies_window.show()
         self._buddies_window.raise_()
         self._buddies_window.activateWindow()
+
+    def _open_stats_window(self) -> None:
+        if self._stats_window is None:
+            self._stats_window = StatsWindow(
+                self._conn, parent=self,
+                unit_system=preferences.get_units(),
+            )
+        # Always refresh on open so the numbers reflect any
+        # add/edit/delete the user has done since the last open.
+        self._stats_window.refresh()
+        self._stats_window.show()
+        self._stats_window.raise_()
+        self._stats_window.activateWindow()
+
+    def _refresh_stats_window(self) -> None:
+        """If the stats window is open, re-run the aggregations and
+        update the displayed values."""
+        if self._stats_window is not None:
+            self._stats_window.refresh()
 
     def _start_opendivemap_import(self) -> None:
         # Confirm first — the import takes a couple of minutes.
