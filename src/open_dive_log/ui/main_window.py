@@ -542,7 +542,7 @@ class MainWindow(QMainWindow):
             f"<p>Schema version: {self._schema_version}</p>"
             f"<p>DB path: <code>{get_default_db_path()}</code></p>"
             "<p>Open source under Apache 2.0. "
-            "<a href='https://github.com/craigvitter/open-dive-log'>github.com/craigvitter/open-dive-log</a></p>",
+            "<a href='https://github.com/cvitter/open-dive-log'>github.com/cvitter/open-dive-log</a></p>",
         )
 
     # ------------------------------------------------------------------

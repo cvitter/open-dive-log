@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 API_BASE = "https://api.opendivemap.com/v1"
-DEFAULT_USER_AGENT = "open-dive-log/0.0.1 (https://github.com/craigvitter/open-dive-log)"
+DEFAULT_USER_AGENT = "open-dive-log/0.0.1 (https://github.com/cvitter/open-dive-log)"
 DEFAULT_PAGE_SIZE = 1000  # API caps at 1000 per page
 
 
