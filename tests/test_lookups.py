@@ -129,6 +129,52 @@ def test_count_referencing_for_table_with_no_refs(
     assert lk.count_referencing(conn, "lookup_purpose", v.id) == 0
 
 
+def test_count_referencing_counts_certification_links(
+    conn: sqlite3.Connection,
+) -> None:
+    """Regression: ``lookup_certifying_agency`` had a stale column name
+    in ``_REFERENCING_COLUMNS`` (``certification.agency_id`` instead of
+    ``certification.certifying_agency_id``), which raised
+    ``sqlite3.OperationalError: no such column: agency_id`` whenever
+    the Lookups UI selected the agency category. Verify a cert that
+    references an agency is counted, and an unreferenced agency is 0.
+    """
+    from open_dive_log.repositories import certifications as cert_repo
+
+    padi = lk.add(conn, "lookup_certifying_agency", "PADI (regression test)")
+    ssi = lk.add(conn, "lookup_certifying_agency", "SSI (regression test)")
+
+    # No certs yet — both are zero.
+    assert lk.count_referencing(conn, "lookup_certifying_agency", padi.id) == 0
+    assert lk.count_referencing(conn, "lookup_certifying_agency", ssi.id) == 0
+
+    # Add two certs through PADI, one through SSI.
+    cert_repo.create(
+        conn,
+        cert_date="2026-07-01",
+        cert_name="Open Water",
+        cert_number="OW-1",
+        certifying_agency_id=padi.id,
+    )
+    cert_repo.create(
+        conn,
+        cert_date="2026-07-02",
+        cert_name="Advanced",
+        cert_number="AOW-1",
+        certifying_agency_id=padi.id,
+    )
+    cert_repo.create(
+        conn,
+        cert_date="2026-07-03",
+        cert_name="Open Water",
+        cert_number="OW-SSI-1",
+        certifying_agency_id=ssi.id,
+    )
+
+    assert lk.count_referencing(conn, "lookup_certifying_agency", padi.id) == 2
+    assert lk.count_referencing(conn, "lookup_certifying_agency", ssi.id) == 1
+
+
 # --------------------------------------------------------------- window
 def _subprocess_test(source: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     """Run a Qt test source in a subprocess. The source should print

@@ -87,7 +87,7 @@ _REFERENCING_COLUMNS: dict[str, tuple[str, str, ...]] = {
     "lookup_buddy_role":           ("dive_buddy.role_id",),
     "lookup_site_environment":     ("site.environment_id",),
     "lookup_site_topology":        ("site_site_topology.topology_id",),
-    "lookup_certifying_agency":    ("certification.agency_id",),
+    "lookup_certifying_agency":    ("certification.certifying_agency_id",),
 }
 
 
