@@ -221,7 +221,15 @@ open-dive-log/
 │       ├── cert_list_window.py
 │       ├── lookups_list_window.py
 │       └── stats_window.py
-└── tests/                           # 206 tests; pytest < 9
+├── tests/                           # 206 tests; pytest < 9
+├── CONTRIBUTING.md                  # dev setup, conventions, PR process
+├── CODE_OF_CONDUCT.md               # Contributor Covenant 2.1
+└── .github/
+    ├── ISSUE_TEMPLATE/
+    │   ├── bug_report.md
+    │   ├── feature_request.md
+    │   └── question.md
+    └── PULL_REQUEST_TEMPLATE.md
 ```
 
 ## Testing
@@ -262,6 +270,27 @@ but the venv's editable-install `.pth` file isn't processed when
 (including Hermes) set `PYTHONPATH` by default, so the generated
 console script fails with `ModuleNotFoundError`. The wrapper sets
 `PYTHONPATH=src` explicitly and strips the inherited value.
+
+## Contributing
+
+Contributions are welcome — bug reports, feature requests, and pull
+requests. The full guide lives in
+[`CONTRIBUTING.md`](CONTRIBUTING.md); the short version:
+
+- **Open an issue first** for non-trivial changes so the design can
+  be agreed before code is written.
+- **Conventional Commits** for messages: `feat:`, `fix:`, `docs:`,
+  `refactor:`, `test:`, `chore:` — with a scope when useful, e.g.
+  `fix(repositories): persist country_code when editing a site`.
+- **Sign off your commits** (`git commit -s`); this project uses the
+  DCO, not a CLA. One-time setup: `git config format.signOff true`.
+- **PRs must include tests** for new behavior. `pytest` and
+  `ruff check` both run in CI.
+- **Use the issue and PR templates** — they exist to save you and
+  the maintainer time. Bug reports without OS / Python / PySide6
+  versions will be asked for before investigation starts.
+- **Be excellent to each other** — see
+  [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## License
 
