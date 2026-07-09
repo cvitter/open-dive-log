@@ -288,12 +288,13 @@ class SiteAddEditDialog(QDialog):
 
         country_code = self._combo_id(self._country_code)
         country = self._clean(self._country.text())
-        if not country_code and not country:
-            QMessageBox.warning(
-                self, "Country required",
-                "Pick a country (ISO code) or enter the country name as text.",
-            )
-            return
+
+        # Country is optional. A site may have been created inline
+        # from a dive form with no country set; editing it later
+        # shouldn't require the user to add a country just to save
+        # their other changes. Country is highly recommended for
+        # new sites (the form shows the dropdown prominently), but
+        # we don't block the save here.
 
         # If the user picked a code but left the free-text blank, fill
         # it in from the country table so the display name is consistent.

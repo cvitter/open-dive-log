@@ -51,6 +51,7 @@ from open_dive_log.ui.dive_table_model import DiveTableModel, load_rows
 from open_dive_log.ui.sites_list_window import SitesListWindow
 from open_dive_log.ui.buddies_list_window import BuddiesListWindow
 from open_dive_log.ui.stats_window import StatsWindow
+from open_dive_log.ui.lookups_list_window import LookupsListWindow
 
 
 class _ImportWorker(QObject):
@@ -158,6 +159,7 @@ class MainWindow(QMainWindow):
         self._buddies_window: BuddiesListWindow | None = None
         self._certs_window: CertListWindow | None = None
         self._stats_window: StatsWindow | None = None
+        self._lookups_window: LookupsListWindow | None = None
 
         # Initial population.
         self._refresh_dive_list()
@@ -231,11 +233,11 @@ class MainWindow(QMainWindow):
         action_list_certs.triggered.connect(self._open_certs_window)
         certs_menu.addAction(action_list_certs)
 
-        # --- Lookups (placeholder) ---
+        # --- Lookups ---
         lookups_menu = bar.addMenu("&Lookups")
         action_manage_lookups = QAction("&Manage Lookups…", self)
-        action_manage_lookups.setEnabled(False)
-        action_manage_lookups.setToolTip("Coming in a later phase")
+        action_manage_lookups.setShortcut(QKeySequence("Ctrl+Shift+L"))
+        action_manage_lookups.triggered.connect(self._open_lookups_window)
         lookups_menu.addAction(action_manage_lookups)
 
         # --- View (units toggle, persisted across restarts) ---
@@ -477,6 +479,13 @@ class MainWindow(QMainWindow):
         update the displayed values."""
         if self._stats_window is not None:
             self._stats_window.refresh()
+
+    def _open_lookups_window(self) -> None:
+        if self._lookups_window is None:
+            self._lookups_window = LookupsListWindow(self._conn, parent=self)
+        self._lookups_window.show()
+        self._lookups_window.raise_()
+        self._lookups_window.activateWindow()
 
     def _start_opendivemap_import(self) -> None:
         # Confirm first — the import takes a couple of minutes.
