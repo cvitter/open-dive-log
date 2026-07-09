@@ -11,12 +11,18 @@ clean extension.
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from collections.abc import Iterable
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    Qt,
+)
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QHeaderView,
     QLabel,
@@ -165,6 +171,12 @@ class SiteTableModel(QAbstractTableModel):
         row = self._rows[index.row()]
         col = index.column()
 
+        # Expose the site id via UserRole so views can look up
+        # the id for a given row (used by the "select newly created
+        # site" path in SitesListWindow._on_new_action).
+        if role == Qt.ItemDataRole.UserRole:
+            return row.id
+
         if role == Qt.ItemDataRole.DisplayRole:
             if col == 0:
                 return row.name
@@ -264,6 +276,14 @@ class SitesListWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        self._action_new = QAction("&New Site…", self)
+        self._action_new.setShortcut("Ctrl+N")
+        self._action_new.setStatusTip("Add a new site to the database")
+        self._action_new.triggered.connect(self._on_new_action)
+        toolbar.addAction(self._action_new)
+
+        toolbar.addSeparator()
+
         self._action_edit = QAction("&Edit…", self)
         self._action_edit.setShortcut("Ctrl+E")
         self._action_edit.triggered.connect(self._on_edit_action)
@@ -284,6 +304,7 @@ class SitesListWindow(QMainWindow):
 
         # --- Context menu on the table (right-click) --------------------
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+        self._table.addAction(self._action_new)
         self._table.addAction(self._action_edit)
         self._table.addAction(self._action_delete)
 
@@ -358,6 +379,62 @@ class SitesListWindow(QMainWindow):
         self._update_status()
 
     # ----------------------------------------------------------- actions
+    def _on_new_action(self) -> None:
+        """Open the site form in create mode. On Accept, insert a new
+        site and select it in the table.
+        """
+        from open_dive_log.ui.site_add_edit_dialog import (
+            SiteAddEditDialog, SubmittedSite,
+        )
+        dlg = SiteAddEditDialog(
+            self._conn,
+            site=None,
+            unit_system=self._model.unit_system(),
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        sub = dlg.submitted()
+        if sub is None:
+            return
+        # Convert the frozen dataclass to a dict for the repo call.
+        kwargs = dataclasses.asdict(sub)
+        # is_new is a UI flag, not a column — strip it before insert.
+        kwargs.pop("is_new", None)
+        try:
+            new_site = sites_repo.create(self._conn, **kwargs)
+        except sqlite3.IntegrityError as e:
+            # Most likely the (name, country) pair is already taken
+            # by an existing site. Show a clear error.
+            QMessageBox.critical(
+                self, "Could not create site",
+                "A site with that name and country already exists. "
+                "Use Edit to change the existing site, or pick a "
+                "different name/country.\n\n"
+                f"Database error: {e}",
+            )
+            return
+        except ValueError as e:
+            # Empty name — the form should have caught this, but
+            # be defensive in case validation drifts.
+            QMessageBox.warning(self, "Could not create site", str(e))
+            return
+        # Refresh the model and select the new row.
+        self.refresh()
+        self._select_site_by_id(new_site.id)
+        self.statusBar().showMessage(
+            f"Created site '{new_site.name}'", 5000,
+        )
+
+    def _select_site_by_id(self, site_id: int) -> None:
+        """Find the row with the given site id and select it."""
+        for row in range(self._model.rowCount()):
+            idx = self._model.index(row, 0)
+            if self._model.data(idx, Qt.ItemDataRole.UserRole) == site_id:
+                self._table.selectRow(row)
+                self._table.scrollTo(idx, QAbstractItemView.ScrollHint.PositionAtCenter)
+                return
+
     def _on_edit_action(self, *_args) -> None:
         site = self.selected_site()
         if site is not None:

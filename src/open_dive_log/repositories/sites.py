@@ -110,6 +110,59 @@ def list_all(conn: sqlite3.Connection) -> list[Site]:
     return [_row_to_site(r) for r in rows]
 
 
+def create(
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    region: str | None = None,
+    country: str | None = None,
+    country_code: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    sea_mrgid: int | None = None,
+    environment_id: int | None = None,
+    entry_id: int | None = None,
+    max_depth_m: float | None = None,
+    description: str | None = None,
+    description_wildlife: str | None = None,
+    notes: str | None = None,
+) -> Site:
+    """Create a brand-new site row. Unlike find_or_create, this never
+    dedupes — every call inserts a new row.
+
+    The caller is responsible for ensuring the (name, country) pair
+    doesn't already exist; the table has a UNIQUE constraint on
+    (name, country) and we'll raise sqlite3.IntegrityError if it
+    does. The UI catches that and shows a friendly message.
+
+    Returns the inserted Site (re-fetched from the DB so all
+    joined fields are populated, not just the inserted ones).
+    """
+    if not name or not name.strip():
+        raise ValueError("Site name is required")
+    cur = conn.execute(
+        """
+        INSERT INTO site (
+            name, region, country, country_code,
+            latitude, longitude, sea_mrgid,
+            environment_id, entry_id, max_depth_m,
+            description, description_wildlife, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            name.strip(), region, country, country_code,
+            latitude, longitude, sea_mrgid,
+            environment_id, entry_id, max_depth_m,
+            description, description_wildlife, notes,
+        ),
+    )
+    new_id = cur.lastrowid
+    assert new_id is not None
+    new_site = get(conn, new_id)
+    assert new_site is not None
+    return new_site
+
+
 def get_topologies(conn: sqlite3.Connection, site_id: int) -> list[TopologyRef]:
     rows = conn.execute(
         """

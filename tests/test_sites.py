@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from open_dive_log import db
-from open_dive_log.repositories import dives, sites as sites_repo
+from open_dive_log.repositories import dives, lookups, sites as sites_repo
 
 
 @pytest.fixture
@@ -181,7 +181,12 @@ def _run_qt_test(test_source: str) -> subprocess.CompletedProcess:
         """
         import sys
         import os
-        os.environ.setdefault('QT_QPA_PLATFORM', 'cocoa')
+        # 'offscreen' is a built-in Qt platform plugin and doesn't
+        # need the cocoa dylib, so this works on a fresh venv that
+        # has the (unremovable) com.apple.provenance xattr on
+        # libqcocoa.dylib. We use it for ALL Qt subprocess tests
+        # in this project to keep the venv working.
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
         try:
             from PySide6.QtWidgets import QApplication
         except Exception as e:
@@ -814,3 +819,294 @@ def test_sites_list_window_filter_updates_status_bar() -> None:
         print('OK: search filters rows and updates status bar')
         """
     ))
+
+
+# ---------------------------------------------------------------------------
+# sites_repo.create() — explicit create (no dedup) for the "New Site" UI flow
+# ---------------------------------------------------------------------------
+def test_create_inserts_minimal_site(empty_db: sqlite3.Connection) -> None:
+    """A site with just a name (no country, no other fields) can be
+    created. The form's country check is relaxed, so this is the
+    minimum the UI can produce."""
+    s = sites_repo.create(empty_db, name="MyNewSite")
+    assert s.id > 0
+    assert s.name == "MyNewSite"
+    assert s.country is None
+    assert s.country_code is None
+    # Re-fetched, so joined fields are populated
+    assert s.environment_name is None
+    # And it shows up in list_all
+    assert any(x.id == s.id for x in sites_repo.list_all(empty_db))
+
+
+def test_create_persists_all_fields(empty_db: sqlite3.Connection) -> None:
+    """All optional fields round-trip through create + get."""
+    empty_db.execute(
+        "INSERT OR IGNORE INTO country (code, name) VALUES ('BQ', 'Bonaire')"
+    )
+    empty_db.commit()
+    env = lookups.get_by_name(empty_db, "lookup_site_environment", "ocean")
+    assert env is not None
+    entry = lookups.get_by_name(empty_db, "lookup_entry_type", "shore")
+    assert entry is not None
+    s = sites_repo.create(
+        empty_db,
+        name="Salt Pier",
+        region="Southern Caribbean",
+        country="Bonaire",
+        country_code="BQ",
+        latitude=12.15,
+        longitude=-68.28,
+        max_depth_m=30.0,
+        environment_id=env.id,
+        entry_id=entry.id,
+        description="World-class shore dive",
+        description_wildlife="Tarpon, seahorses, parrotfish",
+        notes="Easy entry, watch for urchins",
+    )
+    got = sites_repo.get(empty_db, s.id)
+    assert got is not None
+    assert got.name == "Salt Pier"
+    assert got.region == "Southern Caribbean"
+    assert got.country == "Bonaire"
+    assert got.country_code == "BQ"
+    assert got.country_name == "Bonaire"  # joined
+    assert got.latitude == 12.15
+    assert got.longitude == -68.28
+    assert got.max_depth_m == 30.0
+    assert got.environment_name == "ocean"  # joined
+    assert got.entry_name == "shore"  # joined
+    assert got.description == "World-class shore dive"
+
+
+def test_create_raises_on_duplicate_name_country(
+    empty_db: sqlite3.Connection,
+) -> None:
+    """The site table has UNIQUE(name, country). A second create()
+    with the same (name, country) pair must raise IntegrityError.
+    """
+    empty_db.execute(
+        "INSERT OR IGNORE INTO country (code, name) VALUES ('BQ', 'Bonaire')"
+    )
+    empty_db.commit()
+    sites_repo.create(empty_db, name="Salt Pier", country="Bonaire")
+    with pytest.raises(sqlite3.IntegrityError):
+        sites_repo.create(empty_db, name="Salt Pier", country="Bonaire")
+
+
+def test_create_raises_on_empty_name(empty_db: sqlite3.Connection) -> None:
+    """An empty or whitespace-only name raises ValueError."""
+    with pytest.raises(ValueError, match="name"):
+        sites_repo.create(empty_db, name="")
+    with pytest.raises(ValueError, match="name"):
+        sites_repo.create(empty_db, name="   ")
+
+
+def test_create_allows_same_name_different_country(
+    empty_db: sqlite3.Connection,
+) -> None:
+    """Two sites with the same name but different countries are
+    allowed by the UNIQUE(name, country) constraint."""
+    empty_db.execute(
+        "INSERT OR IGNORE INTO country (code, name) VALUES "
+        "('BQ', 'Bonaire'), ('CW', 'Curaçao')"
+    )
+    empty_db.commit()
+    s1 = sites_repo.create(empty_db, name="Salt Pier", country="Bonaire")
+    s2 = sites_repo.create(empty_db, name="Salt Pier", country="Curaçao")
+    assert s1.id != s2.id
+
+
+def test_qt_sites_list_window_new_action_creates_site() -> None:
+    """The 'New Site…' toolbar action opens the dialog in create mode,
+    and on Accept inserts a new row that's then selected in the
+    table. We drive the dialog directly (bypassing the modal exec)
+    to keep the test deterministic.
+    """
+    _assert_qt_ok(_run_qt_test("""
+    import os
+    os.environ['PYTHONPATH'] = 'src'
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    from open_dive_log.db import connect, apply_migrations
+    from open_dive_log.repositories import sites as sites_repo
+    from open_dive_log.ui.sites_list_window import SitesListWindow
+    from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
+
+    app = QApplication.instance() or QApplication([])
+    # Auto-confirm any QMessageBox (the duplicate-name error path
+    # would surface one; we don't want it to block).
+    QMessageBox.critical = staticmethod(
+        lambda *a, **k: QMessageBox.StandardButton.Ok
+    )
+
+    cm = connect(':memory:')
+    c = cm.__enter__()
+    apply_migrations(c)
+
+    try:
+        win = SitesListWindow(c)
+        # Window starts empty.
+        assert win._model.rowCount() == 0
+        # The 'New' action exists and is enabled.
+        assert win._action_new.isEnabled()
+        assert win._action_new.shortcut().toString() == 'Ctrl+N'
+
+        # Drive the dialog: pre-fill the name + max depth, then have
+        # exec() return Accepted (mimicking the user clicking OK).
+        original_init = SiteAddEditDialog.__init__
+        def init_with_name(self, conn, **kwargs):
+            original_init(self, conn, **kwargs)
+            if kwargs.get('site') is None:
+                # Create mode — pre-fill the name
+                self._name.setText('Brand New Site')
+                self._max_depth.setValue(15.0)
+        SiteAddEditDialog.__init__ = init_with_name
+
+        original_exec = SiteAddEditDialog.exec
+        def fake_exec(self):
+            self._on_save()
+            return SiteAddEditDialog.DialogCode.Accepted
+        SiteAddEditDialog.exec = fake_exec
+
+        try:
+            win._on_new_action()
+        finally:
+            SiteAddEditDialog.__init__ = original_init
+            SiteAddEditDialog.exec = original_exec
+
+        # The new site should now be in the model.
+        assert win._model.rowCount() == 1
+        new_row = win._model._rows[0]
+        assert new_row.name == 'Brand New Site'
+        assert new_row.max_depth_m == 15.0
+
+        # The new site should be selected.
+        assert win.selected_site() is not None
+        assert win.selected_site().id == new_row.id
+
+        # And it persisted to the DB.
+        got = sites_repo.get(c, new_row.id)
+        assert got is not None
+        assert got.name == 'Brand New Site'
+
+        # Status bar should reflect the new site.
+        assert 'Created site' in win.statusBar().currentMessage()
+
+        win.close()
+    finally:
+        cm.__exit__(None, None, None)
+    print('OK: new action creates and selects site')
+    """))
+
+
+def test_qt_sites_list_window_new_action_handles_duplicate() -> None:
+    """If the user tries to create a site whose (name, country) pair
+    already exists, the dialog's submission triggers an
+    IntegrityError which the window catches and shows as a
+    QMessageBox.critical. The new site is NOT created and the
+    table is unchanged.
+    """
+    _assert_qt_ok(_run_qt_test("""
+    import os
+    os.environ['PYTHONPATH'] = 'src'
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    from open_dive_log.db import connect, apply_migrations
+    from open_dive_log.repositories import sites as sites_repo
+    from open_dive_log.ui.sites_list_window import SitesListWindow
+    from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
+
+    app = QApplication.instance() or QApplication([])
+
+    # Capture any QMessageBox.critical calls
+    critical_calls: list[tuple[str, str]] = []
+    def fake_critical(parent, title, text, *args, **kwargs):
+        critical_calls.append((title, text))
+        return QMessageBox.StandardButton.Ok
+    QMessageBox.critical = staticmethod(fake_critical)
+
+    cm = connect(':memory:')
+    c = cm.__enter__()
+    apply_migrations(c)
+    c.execute("INSERT OR IGNORE INTO country (code, name) VALUES ('BQ', 'Bonaire')")
+    c.commit()
+
+    # Pre-seed a site with the same name + country we'll try to create
+    sites_repo.create(c, name='ExistingSite', country='Bonaire', country_code='BQ')
+
+    try:
+        win = SitesListWindow(c)
+        assert win._model.rowCount() == 1
+
+        # Drive the dialog: pre-fill the conflicting name + country,
+        # and have exec() drive _on_save and return Accepted.
+        original_init = SiteAddEditDialog.__init__
+        def init_with_duplicate(self, conn, **kwargs):
+            original_init(self, conn, **kwargs)
+            if kwargs.get('site') is None:
+                self._name.setText('ExistingSite')
+                # Pick 'BQ' in the country_code combo (index 1, after '(none)')
+                idx = self._country_code.findData('BQ')
+                assert idx >= 0, f'BQ not in country combo: {[self._country_code.itemData(i) for i in range(self._country_code.count())]}'
+                self._country_code.setCurrentIndex(idx)
+        SiteAddEditDialog.__init__ = init_with_duplicate
+        original_exec = SiteAddEditDialog.exec
+        def fake_exec(self):
+            self._on_save()
+            return SiteAddEditDialog.DialogCode.Accepted
+        SiteAddEditDialog.exec = fake_exec
+
+        try:
+            win._on_new_action()
+        finally:
+            SiteAddEditDialog.__init__ = original_init
+            SiteAddEditDialog.exec = original_exec
+
+        # The QMessageBox.critical should have fired with a clear message
+        assert len(critical_calls) == 1
+        title, text = critical_calls[0]
+        assert title == 'Could not create site'
+        assert 'already exists' in text
+
+        # No new row was created — count unchanged.
+        assert win._model.rowCount() == 1
+        assert win._model._rows[0].name == 'ExistingSite'
+
+        win.close()
+    finally:
+        cm.__exit__(None, None, None)
+    print('OK: duplicate create is caught and reported')
+    """))
+
+
+def test_qt_sites_list_window_new_action_is_always_enabled() -> None:
+    """The 'New' action should be enabled regardless of selection —
+    the user can add a new site whether or not any row is selected."""
+    _assert_qt_ok(_run_qt_test("""
+    import os
+    os.environ['PYTHONPATH'] = 'src'
+    from PySide6.QtWidgets import QApplication
+    from open_dive_log.db import connect, apply_migrations
+    from open_dive_log.ui.sites_list_window import SitesListWindow
+
+    app = QApplication.instance() or QApplication([])
+
+    cm = connect(':memory:')
+    c = cm.__enter__()
+    apply_migrations(c)
+
+    try:
+        # Empty DB
+        win = SitesListWindow(c)
+        assert win._action_new.isEnabled()
+        # After selecting a row
+        win._table.selectRow(0)  # no-op since empty, but doesn't error
+        assert win._action_new.isEnabled()
+        # Edit/Delete should still be disabled (no selection)
+        assert not win._action_edit.isEnabled()
+        assert not win._action_delete.isEnabled()
+        win.close()
+    finally:
+        cm.__exit__(None, None, None)
+    print('OK: new action is always enabled')
+    """))
+
