@@ -27,7 +27,7 @@ labels that the user wants. Suggested colors:
 
 ---
 
-## 1. Dive search and filtering  *(high priority, modest effort)*
+## 1. (issue #2) Dive search and filtering  *(high priority, modest effort)*
 
 **Labels:** `enhancement`, `priority: high`, `area: ui`, `area: data`
 
@@ -54,11 +54,11 @@ should match.
 - Status bar reflects the active filter
 - A test seeds 50 dives and asserts each filter dimension works
 
-**Related:** #4 (charts), #11 (trends over time)
+**Related:** #5 (charts), #12 (trends over time)
 
 ---
 
-## 2. CSV / JSON export (and import)  *(high priority, modest effort)*
+## 2. (issue #3) CSV / JSON export (and import)  *(high priority, modest effort)*
 
 **Labels:** `enhancement`, `priority: high`, `area: data`, `area: import`
 
@@ -89,11 +89,11 @@ denominator for logbook portability.
 - Import shows progress for files with 100+ rows
 - 3 new tests: export-empty, export-nonempty, import-roundtrip
 
-**Related:** #16 (test data generator)
+**Related:** #17 (test data generator)
 
 ---
 
-## 3. Photo attachments per dive  *(high priority, modest effort)*
+## 3. (issue #4) Photo attachments per dive  *(high priority, modest effort)*
 
 **Labels:** `enhancement`, `priority: high`, `area: ui`, `area: data`
 
@@ -118,11 +118,11 @@ buddies. The current logbook has no way to attach these to a dive.
 - Files outside the media dir are rejected (security)
 - 2 new tests: add photo, delete photo
 
-**Related:** #1 (search — search by photo caption), #8 (Markdown notes)
+**Related:** #2 (search — search by photo caption), #9 (Markdown notes)
 
 ---
 
-## 4. Dive profile chart in the detail dialog  *(high priority, modest effort)*
+## 4. (issue #5) Dive profile chart in the detail dialog  *(high priority, modest effort)*
 
 **Labels:** `enhancement`, `priority: high`, `area: ui`
 
@@ -134,7 +134,7 @@ informative than a row of numbers.
 - Detail dialog: new "Profile" section with a depth-vs-time chart
 - Data: each dive gets a single `(time, depth)` point at its
   `dive_time_minutes` and `max_depth_m` for now (no per-second
-  samples — see #10 for that)
+  samples — see #11 for that)
 - Use `QPainter` directly (no extra deps) or a minimal chart helper
 - Show `avg_depth_m` as a horizontal reference line
 - Chart honors the unit toggle (metric / imperial)
@@ -146,11 +146,11 @@ informative than a row of numbers.
 - The unit toggle changes axis labels
 - 1 test: chart renders without error in offscreen Qt
 
-**Related:** #5 (GPX import — real profile data), #11 (trends)
+**Related:** #6 (GPX import — real profile data), #12 (trends)
 
 ---
 
-## 5. GPX track import with profile chart  *(high priority, modest effort)*
+## 5. (issue #6) GPX track import with profile chart  *(high priority, modest effort)*
 
 **Labels:** `enhancement`, `priority: high`, `area: import`, `area: data`
 
@@ -168,7 +168,7 @@ into a real dive recorder.
   store as the dive's fields
 - Optionally: store the full sample series in a `dive_samples`
   table for charting
-- Show a per-sample chart in the detail dialog (extends #4)
+- Show a per-sample chart in the detail dialog (extends #5)
 
 **Acceptance criteria:**
 - A sample GPX file (provided in tests) imports cleanly
@@ -176,11 +176,11 @@ into a real dive recorder.
 - The chart renders the actual profile
 - 2 new tests: import-and-aggregate, sample-storage
 
-**Related:** #4 (chart), #10 (dive computer integration)
+**Related:** #5 (chart), #11 (dive computer integration)
 
 ---
 
-## 6. Site map view  *(high priority, modest effort)*
+## 6. (issue #7) Site map view  *(high priority, modest effort)*
 
 **Labels:** `enhancement`, `priority: high`, `area: ui`, `area: data`
 
@@ -204,11 +204,11 @@ regions they're traveling to.
 - A test seeds 100 sites with random lat/lon and asserts the map
   renders
 
-**Related:** #1 (search filter on the map), #14 (geolocation fill-in)
+**Related:** #2 (search filter on the map), #15 (geolocation fill-in)
 
 ---
 
-## 7. Markdown notes for dives  *(high priority, modest effort)*
+## 7. (issue #8) Markdown notes for dives  *(high priority, modest effort)*
 
 **Labels:** `enhancement`, `priority: high`, `area: ui`
 
@@ -232,11 +232,11 @@ detail dialog.
 - A test seeds a dive with markdown notes and asserts the
   rendered output
 
-**Related:** #3 (photo captions could be markdown)
+**Related:** #4 (photo captions could be markdown)
 
 ---
 
-## 8. Dive computer integration  *(longer-term)*
+## 8. (issue #9) Dive computer integration  *(longer-term)*
 
 **Labels:** `enhancement`, `area: import`, `area: integration`
 
@@ -266,11 +266,11 @@ transcription.
 - A test that loads each plugin's `parse()` and asserts the
   output shape
 
-**Related:** #5 (GPX — simpler version of this)
+**Related:** #6 (GPX — simpler version of this)
 
 ---
 
-## 9. Multi-user / cloud sync  *(longer-term)*
+## 9. (issue #10) Multi-user / cloud sync  *(longer-term)*
 
 **Labels:** `enhancement`, `area: integration`
 
@@ -291,11 +291,11 @@ also lets a diver use the logbook on multiple machines.
 - A 2-way merge of 10 divergent rows converges
 - 2 new tests: push-empty, push-then-pull
 
-**Related:** #17 (backup reminder)
+**Related:** #18 (backup reminder)
 
 ---
 
-## 10. Print a full dive log  *(longer-term)*
+## 10. (issue #11) Print a full dive log  *(longer-term)*
 
 **Labels:** `enhancement`, `area: ui`, `area: print`
 
@@ -317,11 +317,11 @@ it to the full dive list.
 - The PDF has a cover page and at least 15 dive rows
 - 1 test: render-empty renders a "no dives" cover
 
-**Related:** #3 (photo attachments — printed alongside the dive)
+**Related:** #4 (photo attachments — printed alongside the dive)
 
 ---
 
-## 11. Statistics: trends over time  *(longer-term)*
+## 11. (issue #12) Statistics: trends over time  *(longer-term)*
 
 **Labels:** `enhancement`, `area: ui`, `area: data`
 
@@ -334,18 +334,18 @@ per year. The data is there; the visualizations aren't.
 - Charts: dives per year (bar), depth over time (line), bottom
   time over time (line)
 - Time period selector: last 1y / 5y / 10y / all
-- Use the same chart helper as #4
+- Use the same chart helper as #5
 
 **Acceptance criteria:**
 - Charts render for a DB with 200 dives spanning 3 years
 - Time period selector filters correctly
 - 1 test: each chart type renders in offscreen Qt
 
-**Related:** #4 (chart helper), #5 (profile data for depth-over-time)
+**Related:** #5 (chart helper), #6 (profile data for depth-over-time)
 
 ---
 
-## 12. Configurable unit precision  *(longer-term)*
+## 12. (issue #13) Configurable unit precision  *(longer-term)*
 
 **Labels:** `enhancement`, `area: ui`
 
@@ -367,11 +367,11 @@ hardcode the precision.
 - The setting persists across restarts
 - A test seeds the preferences file and asserts display output
 
-**Related:** #13 (precision already works for some values)
+**Related:** #14 (precision already works for some values)
 
 ---
 
-## 13. Bulk import from other logbook apps  *(longer-term)*
+## 13. (issue #14) Bulk import from other logbook apps  *(longer-term)*
 
 **Labels:** `enhancement`, `area: import`
 
@@ -395,11 +395,11 @@ Log, or MacDive need a way to bring their data.
 - Unit conversions are correct
 - Sites and buddies are de-duplicated
 
-**Related:** #2 (CSV / JSON — simpler version), #8 (dive computer)
+**Related:** #3 (CSV / JSON — simpler version), #9 (dive computer)
 
 ---
 
-## 14. Auto-fill country from geolocation  *(longer-term)*
+## 14. (issue #15) Auto-fill country from geolocation  *(longer-term)*
 
 **Labels:** `enhancement`, `area: ui`, `area: data`
 
@@ -424,11 +424,11 @@ hint fills in the country in one click.
   found" message
 - 2 new tests: hit, miss
 
-**Related:** #6 (map view)
+**Related:** #7 (map view)
 
 ---
 
-## 15. Site topology editor  *(longer-term)*
+## 15. (issue #16) Site topology editor  *(longer-term)*
 
 **Labels:** `enhancement`, `area: ui`, `area: data`
 
@@ -449,11 +449,11 @@ with "wreck", "cave", "wall", "drift", etc.
   remaining one
 - 2 new tests
 
-**Related:** #6 (map view — color-code markers by topology)
+**Related:** #7 (map view — color-code markers by topology)
 
 ---
 
-## 16. Test data generator  *(longer-term, `good first issue`)*
+## 16. (issue #17) Test data generator  *(longer-term, `good first issue`)*
 
 **Labels:** `enhancement`, `good first issue`, `area: data`
 
@@ -475,11 +475,11 @@ opendivemap import (3 minutes) then manually adding dives.
 - A test runs the synthesizer and asserts the count and that
   the values are within reasonable ranges
 
-**Related:** #2 (CSV export of the synthesized data)
+**Related:** #3 (CSV export of the synthesized data)
 
 ---
 
-## 17. Backup reminder status-bar indicator  *(longer-term, `good first issue`)*
+## 17. (issue #18) Backup reminder status-bar indicator  *(longer-term, `good first issue`)*
 
 **Labels:** `enhancement`, `good first issue`, `area: ui`
 
@@ -503,11 +503,11 @@ action.
 - "Backup now" creates a copy that can be restored by symlinking
 - 1 test: badge color logic
 
-**Related:** #9 (cloud sync is a richer version of this)
+**Related:** #10 (cloud sync is a richer version of this)
 
 ---
 
-## 18. The 6 remaining opendivemap tags  *(longer-term, `good first issue`)*
+## 18. (issue #19) The 6 remaining opendivemap tags  *(longer-term, `good first issue`)*
 
 **Labels:** `enhancement`, `good first issue`, `area: import`, `area: data`
 
@@ -535,4 +535,4 @@ discarded.
 - The new fields show in the sites list (or detail dialog)
 - 1 test: each new field is populated from a sample tag bag
 
-**Related:** #6 (map view — color markers by rating)
+**Related:** #7 (map view — color markers by rating)

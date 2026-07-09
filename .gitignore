@@ -41,3 +41,6 @@ data/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# GitHub auth
+.gh_token
