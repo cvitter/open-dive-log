@@ -108,7 +108,18 @@ def _fmt_average_minutes(stats: DiveStats, _system: UnitSystem) -> str | None:
 def _fmt_total_minutes(stats: DiveStats, _system: UnitSystem) -> str | None:
     if stats.total_minutes is None:
         return None
-    return f"{stats.total_minutes:,} min"
+    # Under 60 minutes — show as plain minutes (the common case
+    # for new divers with only a handful of dives).
+    if stats.total_minutes < 60:
+        return f"{stats.total_minutes:,} min"
+    # 60+ minutes — break out hours for readability. A diver with
+    # 200+ dives will have thousands of accumulated minutes; the
+    # raw number is hard to parse at a glance. Drop the "0 min"
+    # suffix when the total is an exact number of hours.
+    hours, minutes = divmod(stats.total_minutes, 60)
+    if minutes == 0:
+        return f"{hours:,} hr"
+    return f"{hours:,} hr {minutes} min"
 
 
 def _fmt_dive_count(stats: DiveStats, _system: UnitSystem) -> str | None:

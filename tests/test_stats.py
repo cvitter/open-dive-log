@@ -10,7 +10,8 @@ import pytest
 
 from open_dive_log.db import apply_migrations, connect
 from open_dive_log.repositories import dives
-from open_dive_log.repositories.dives import compute_stats
+from open_dive_log.repositories.dives import DiveStats, compute_stats
+from open_dive_log.ui.stats_window import _fmt_total_minutes
 from open_dive_log.units import UnitSystem
 
 
@@ -67,6 +68,65 @@ def test_compute_stats_aggregates_time_correctly(conn: sqlite3.Connection) -> No
     assert s.shortest_minutes == 30
     assert s.average_minutes == pytest.approx(45.0)
     assert s.total_minutes == 135
+
+
+def _stats_with_total(total: int | None) -> DiveStats:
+    """Build a DiveStats with only total_minutes populated — the
+    other fields are irrelevant to _fmt_total_minutes."""
+    return DiveStats(
+        dive_count=1,
+        dive_time_count=1,
+        longest_minutes=total,
+        shortest_minutes=total,
+        average_minutes=float(total) if total is not None else None,
+        total_minutes=total,
+        deepest_m=None,
+        average_depth_m=None,
+        distinct_sites=0,
+        distinct_countries=0,
+    )
+
+
+def test_fmt_total_minutes_under_60() -> None:
+    """Under 60 minutes — show as plain minutes, the common case
+    for a new diver with only a handful of dives."""
+    assert _fmt_total_minutes(_stats_with_total(0), UnitSystem.METRIC) == "0 min"
+    assert _fmt_total_minutes(_stats_with_total(1), UnitSystem.METRIC) == "1 min"
+    assert _fmt_total_minutes(_stats_with_total(45), UnitSystem.METRIC) == "45 min"
+    assert _fmt_total_minutes(_stats_with_total(59), UnitSystem.METRIC) == "59 min"
+
+
+def test_fmt_total_minutes_60_to_119() -> None:
+    """At 60 minutes the format flips to hours. 60 = "1 hr" (no
+    trailing "0 min"). 90 = "1 hr 30 min"."""
+    assert _fmt_total_minutes(_stats_with_total(60), UnitSystem.METRIC) == "1 hr"
+    assert _fmt_total_minutes(_stats_with_total(75), UnitSystem.METRIC) == "1 hr 15 min"
+    assert _fmt_total_minutes(_stats_with_total(90), UnitSystem.METRIC) == "1 hr 30 min"
+    assert _fmt_total_minutes(_stats_with_total(119), UnitSystem.METRIC) == "1 hr 59 min"
+
+
+def test_fmt_total_minutes_multi_hour() -> None:
+    """Multiple hours: 120 = "2 hr", 135 = "2 hr 15 min", 1500 = "25 hr"."""
+    assert _fmt_total_minutes(_stats_with_total(120), UnitSystem.METRIC) == "2 hr"
+    assert _fmt_total_minutes(_stats_with_total(135), UnitSystem.METRIC) == "2 hr 15 min"
+    assert _fmt_total_minutes(_stats_with_total(720), UnitSystem.METRIC) == "12 hr"
+    assert _fmt_total_minutes(_stats_with_total(1500), UnitSystem.METRIC) == "25 hr"
+
+
+def test_fmt_total_minutes_large_uses_thousands_separator() -> None:
+    """For a heavy diver with thousands of minutes, the thousands
+    separator should be applied to the hours portion."""
+    # 10,000 minutes = 166 hr 40 min
+    s = _stats_with_total(10_000)
+    assert _fmt_total_minutes(s, UnitSystem.METRIC) == "166 hr 40 min"
+    # Exact-hour case at large scale
+    s = _stats_with_total(60 * 1000)
+    assert _fmt_total_minutes(s, UnitSystem.METRIC) == "1,000 hr"
+
+
+def test_fmt_total_minutes_none() -> None:
+    """None total (no dives with time) → None display."""
+    assert _fmt_total_minutes(_stats_with_total(None), UnitSystem.METRIC) is None
 
 
 def test_compute_stats_aggregates_depth_correctly(conn: sqlite3.Connection) -> None:
@@ -253,7 +313,9 @@ def test_stats_window_shows_populated_values() -> None:
             assert win._time_pairs[1][1].text() == "60 min"
             assert win._time_pairs[2][1].text() == "30 min"
             assert win._time_pairs[3][1].text() == "45.0 min"
-            assert win._time_pairs[4][1].text() == "135 min"
+            # 45 + 60 + 30 = 135 minutes → 2 hr 15 min (new format
+            # kicks in at 60+ minutes, see _fmt_total_minutes)
+            assert win._time_pairs[4][1].text() == "2 hr 15 min"
             # depth_pairs: Deepest, Average depth — metric
             assert win._depth_pairs[0][1].text() == "30 m"
             assert win._depth_pairs[1][1].text() == "20.0 m"
