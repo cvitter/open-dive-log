@@ -215,27 +215,12 @@ def test_compute_stats_dive_with_no_sites_zero_sites_and_countries(
 def _subprocess_test(source: str, timeout: int = 30) -> "subprocess.CompletedProcess[str]":  # type: ignore[name-defined]
     """Run a Qt test source in a subprocess.
 
-    The source should print "OK: ..." to indicate success. If the
-    first line is "SKIP:" we treat the test as skipped. Otherwise
-    non-zero exit or uncaught exception is a failure.
+    Thin wrapper around ``tests.conftest.run_qt_subprocess``. The
+    bootstrap that sets up the env (``PYTHONPATH=src``) and starts a
+    QApplication lives in the conftest so it stays in one place.
     """
-    import subprocess
-    import textwrap
-
-    bootstrap = (
-        "import os, sys\n"
-        "os.environ.setdefault('QT_QPA_PLATFORM', 'cocoa')\n"
-        "os.environ.setdefault('PYTHONPATH', 'src')\n"
-    )
-    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    full = bootstrap + textwrap.dedent(source)
-    return subprocess.run(
-        [".venv/bin/python", "-c", full],
-        capture_output=True,
-        text=True,
-        cwd=PROJECT_ROOT,
-        timeout=timeout,
-    )
+    from tests.conftest import run_qt_subprocess
+    return run_qt_subprocess(source, timeout=timeout)
 
 
 def test_stats_window_constructs_empty_db() -> None:

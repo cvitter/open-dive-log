@@ -353,51 +353,19 @@ def test_fmt_renders_none_as_dash() -> None:
 #
 # On a working environment (Linux + system Qt, Windows, etc.) the
 # subprocess returns 0 and the assertions below run normally.
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------------
 import subprocess
-import sys
-import textwrap
 
 
 def _run_qt_test(test_source: str) -> subprocess.CompletedProcess:
-    """Run a snippet of Qt-testing code in a subprocess. Returns the result."""
-    bootstrap = textwrap.dedent(
-        """
-        import sys
-        # Force the Cocoa platform on macOS (the only one with a chance
-        # of working). Skip cleanly if QApplication crashes.
-        import os
-        os.environ.setdefault('QT_QPA_PLATFORM', 'cocoa')
-        try:
-            from PySide6.QtWidgets import QApplication
-        except Exception as e:
-            print(f'SKIP: PySide6 import failed: {e}')
-            sys.exit(0)
-        try:
-            app = QApplication.instance() or QApplication([])
-        except Exception as e:
-            print(f'SKIP: QApplication init failed: {e}')
-            sys.exit(0)
-        if app is None:
-            print('SKIP: QApplication returned None')
-            sys.exit(0)
-        # Probe: did Qt actually attach to a platform plugin?
-        try:
-            _ = app.platformName()
-        except Exception as e:
-            print(f'SKIP: QApplication.platformName() failed: {e}')
-            sys.exit(0)
-        print(f'OK: platform = {app.platformName()}')
-        # Now exec the test body.
-        """
-    )
-    full = bootstrap + textwrap.dedent(test_source)
-    return subprocess.run(
-        [sys.executable, "-c", full],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    """Run a snippet of Qt-testing code in a subprocess. Returns the result.
+
+    Thin wrapper around ``tests.conftest.run_qt_subprocess``. The
+    subprocess bootstrap (env setup + QApplication init) lives in
+    the conftest so the pattern stays in one place.
+    """
+    from tests.conftest import run_qt_subprocess
+    return run_qt_subprocess(test_source)
 
 
 def _subprocess_qt_check(test_source: str) -> None:

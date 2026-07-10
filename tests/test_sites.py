@@ -13,9 +13,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
-import sys
 import tempfile
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -170,44 +168,21 @@ def test_list_blocking_dives_returns_at_most_10(
 # ---------------------------------------------------------------------------
 # Qt dialog: subprocess-isolated tests
 # ---------------------------------------------------------------------------
+# Qt can crash the test runner when libqcocoa.dylib is broken (see
+# README's macOS PySide6 caveat), so the real QApplication is built
+# in a subprocess via the conftest's `run_qt_subprocess` helper.
+# The bootstrap lives there so the env-setup pattern (PYTHONPATH,
+# QT_QPA_PLATFORM) stays in one place.
+
+
 def _run_qt_test(test_source: str) -> subprocess.CompletedProcess:
     """Run a Qt test snippet in a subprocess. Returns the result.
 
-    Mirrors the pattern in tests/test_ui.py. If Qt can't init in the
-    subprocess, the test should be reported as a skip rather than
-    crashing the whole test run.
+    Thin wrapper around ``tests.conftest.run_qt_subprocess`` so this
+    file's existing call sites don't have to change.
     """
-    bootstrap = textwrap.dedent(
-        """
-        import sys
-        import os
-        # 'offscreen' is a built-in Qt platform plugin and doesn't
-        # need the cocoa dylib, so this works on a fresh venv that
-        # has the (unremovable) com.apple.provenance xattr on
-        # libqcocoa.dylib. We use it for ALL Qt subprocess tests
-        # in this project to keep the venv working.
-        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-        try:
-            from PySide6.QtWidgets import QApplication
-        except Exception as e:
-            print(f'SKIP: PySide6 import failed: {e}')
-            sys.exit(0)
-        try:
-            app = QApplication.instance() or QApplication([])
-        except Exception as e:
-            print(f'SKIP: QApplication init failed: {e}')
-            sys.exit(0)
-        if app is None:
-            print('SKIP: QApplication returned None')
-            sys.exit(0)
-        """
-    )
-    full = bootstrap + textwrap.dedent(test_source)
-    return subprocess.run(
-        [sys.executable, "-c", full],
-        capture_output=True, text=True,
-        env={**os.environ, "PYTHONPATH": "src"},
-    )
+    from tests.conftest import run_qt_subprocess
+    return run_qt_subprocess(test_source)
 
 
 def _assert_qt_ok(result: subprocess.CompletedProcess) -> None:
