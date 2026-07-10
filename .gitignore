@@ -44,3 +44,10 @@ data/
 
 # GitHub auth
 .gh_token
+
+# "Save As" duplicates (macOS text editors create these when
+# "Save As" is used to write a copy of a tracked file). They
+# pollute `git status` and are never intentional source files.
+# Pattern matches "foo 2.py", "foo 3.py", "bar 2.md", etc.
+* 2.*
+* 3.*
