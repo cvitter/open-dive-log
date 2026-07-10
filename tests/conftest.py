@@ -145,8 +145,16 @@ def live_conn() -> Iterator[sqlite3.Connection]:
     patch of the default path is irrelevant. The connection is in
     SQLite's default mode; tests that use this fixture MUST NOT
     write — the test only proves the live data is well-formed.
+
+    Skips if the live DB doesn't exist (CI runners, fresh clones).
+    A test that depends on a real DB can only run where the real
+    DB is. The test that uses this fixture should be marked with
+    ``@pytest.mark.allow_live_db`` so the skip reason is visible
+    in the test report.
     """
     real_path = Path(__file__).resolve().parent.parent / "data" / "open_dive_log.db"
+    if not real_path.exists():
+        pytest.skip(f"Live DB does not exist at {real_path}; allow_live_db tests are no-ops here")
     with db.connect(real_path) as conn:
         yield conn
 
