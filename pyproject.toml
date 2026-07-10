@@ -31,6 +31,7 @@ dev = [
 
 [project.scripts]
 open-dive-log = "open_dive_log.__main__:main"
+synthesize-dives = "open_dive_log.synthesize:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/open_dive_log"]

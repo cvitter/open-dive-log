@@ -285,6 +285,15 @@ def list_recent(conn: sqlite3.Connection, limit: int = 50) -> list[Dive]:
     ]
 
 
+def is_empty(conn: sqlite3.Connection) -> bool:
+    """Return True if the `dive` table contains no rows.
+
+    Uses a lightweight `SELECT 1 ... LIMIT 1` for minimal overhead.
+    """
+    row = conn.execute("SELECT 1 FROM dive LIMIT 1").fetchone()
+    return row is None
+
+
 @dataclass(frozen=True, slots=True)
 class DiveStats:
     """Aggregated dive-book statistics for the Stats screen.

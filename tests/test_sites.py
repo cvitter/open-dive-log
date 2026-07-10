@@ -119,6 +119,29 @@ def test_update_can_clear_country_code(
     assert after.country_code is None
 
 
+def test_list_by_ids_filters_sites_and_preserves_order(
+    empty_db: sqlite3.Connection,
+) -> None:
+    first = sites_repo.find_or_create(empty_db, "Salt Pier", country_code="BQ")
+    second = sites_repo.find_or_create(empty_db, "Karpata", country_code="BQ")
+
+    results = sites_repo.list_by_ids(empty_db, [second.id, first.id])
+
+    assert [site.id for site in results] == [second.id, first.id]
+    assert {site.id for site in results} == {first.id, second.id}
+
+
+def test_list_by_ids_returns_all_when_no_ids_provided(
+    empty_db: sqlite3.Connection,
+) -> None:
+    first = sites_repo.find_or_create(empty_db, "Salt Pier", country_code="BQ")
+    second = sites_repo.find_or_create(empty_db, "Karpata", country_code="BQ")
+
+    results = sites_repo.list_by_ids(empty_db, None)
+
+    assert {site.id for site in results} == {first.id, second.id}
+
+
 # ---------------------------------------------------------------------------
 # Repository: delete
 # ---------------------------------------------------------------------------
