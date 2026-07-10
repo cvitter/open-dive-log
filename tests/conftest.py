@@ -47,6 +47,14 @@ import pytest
 from open_dive_log import db
 
 
+# "Save As" duplicates (foo 2.py, foo 3.py) that text editors drop
+# next to tracked files. .gitignore handles the untracked case, but
+# pytest 8's gitignore-respecting collector doesn't always skip these
+# (literal-space-in-glob edge case). Exclude them by name here so the
+# collected test count is the real one.
+collect_ignore_glob = ["* 2.py", "* 3.py"]
+
+
 # Marker: opt out of the live-DB safety net for a single test.
 # Usage:  @pytest.mark.allow_live_db
 # No tests in the suite should use this. It exists so a future test
