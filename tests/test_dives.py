@@ -476,3 +476,193 @@ def test_display_dive_number_matches_chronological_sort_for_live_db(
     assert [r["id"] for r in rows] == sorted(
         (r["id"] for r in rows), reverse=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# list_recent_with_sites filter arguments (issue #2: Dive search and filtering)
+# ---------------------------------------------------------------------------
+# All four filter dimensions compose with AND. Each test seeds a small
+# fixture of 3 dives against 3 sites (US, BS, no-country) so every
+# combination of filter dimension + value is exercised.
+
+
+def _seed_filter_fixture(conn: sqlite3.Connection) -> dict[str, int]:
+    """Seed 3 sites in 3 countries + 3 dives with mixed notes.
+
+    Returns a dict of named row IDs the tests can reference:
+        sites: salt_pier (US), tiger_beach (BS), no_country
+        dives: wreck_dive (Jan 15, "wreck dive", Salt Pier),
+               reef_dive (Mar 22, "reef exploration", Tiger Beach),
+               empty_dive (Jul 4, NULL notes, no_country site)
+    """
+    salt_pier_id = conn.execute(
+        "INSERT INTO site (name, country_code) VALUES (?, ?)",
+        ("Salt Pier", "US"),
+    ).lastrowid
+    tiger_beach_id = conn.execute(
+        "INSERT INTO site (name, country_code) VALUES (?, ?)",
+        ("Tiger Beach", "BS"),
+    ).lastrowid
+    no_country_id = conn.execute(
+        "INSERT INTO site (name) VALUES (?)", ("No Country Site",),
+    ).lastrowid
+    assert salt_pier_id is not None
+    assert tiger_beach_id is not None
+    assert no_country_id is not None
+    sites: dict[str, int] = {
+        "salt_pier": salt_pier_id,
+        "tiger_beach": tiger_beach_id,
+        "no_country": no_country_id,
+    }
+    wreck_dive_id = dives.create(
+        conn, dive_date="2024-01-15",
+        dive_time_minutes=40, max_depth_m=18.0, avg_depth_m=12.0,
+        notes="wreck dive, saw the propeller",
+    )
+    reef_dive_id = dives.create(
+        conn, dive_date="2024-03-22",
+        dive_time_minutes=55, max_depth_m=25.0, avg_depth_m=15.0,
+        notes="reef exploration, sharks visible",
+    )
+    empty_dive_id = dives.create(
+        conn, dive_date="2024-07-04",
+        dive_time_minutes=30, max_depth_m=10.0, avg_depth_m=8.0,
+        notes=None,
+    )
+    dives.attach_sites(conn, wreck_dive_id, [sites["salt_pier"]])
+    dives.attach_sites(conn, reef_dive_id, [sites["tiger_beach"]])
+    dives.attach_sites(conn, empty_dive_id, [sites["no_country"]])
+    conn.commit()
+    return {
+        "salt_pier": sites["salt_pier"],
+        "tiger_beach": sites["tiger_beach"],
+        "no_country": sites["no_country"],
+        "wreck_dive": wreck_dive_id,
+        "reef_dive": reef_dive_id,
+        "empty_dive": empty_dive_id,
+    }
+
+
+def test_list_recent_with_sites_filters_by_site_name_substring(
+    conn: sqlite3.Connection,
+) -> None:
+    """Case-insensitive substring on the joined site name."""
+    ids = _seed_filter_fixture(conn)
+    # "salt" matches Salt Pier (US) only.
+    rows = dives.list_recent_with_sites(conn, site_name_substring="salt")
+    assert [r["id"] for r in rows] == [ids["wreck_dive"]]
+    # Case-insensitive
+    rows = dives.list_recent_with_sites(conn, site_name_substring="TIGER")
+    assert [r["id"] for r in rows] == [ids["reef_dive"]]
+    # No match returns []
+    rows = dives.list_recent_with_sites(conn, site_name_substring="karpata")
+    assert rows == []
+
+
+def test_list_recent_with_sites_filters_by_country(
+    conn: sqlite3.Connection,
+) -> None:
+    """Exact match on the joined site's country code (3-letter ISO)."""
+    ids = _seed_filter_fixture(conn)
+    # US matches wreck_dive only.
+    rows = dives.list_recent_with_sites(conn, country_code="US")
+    assert [r["id"] for r in rows] == [ids["wreck_dive"]]
+    # BS matches reef_dive only.
+    rows = dives.list_recent_with_sites(conn, country_code="BS")
+    assert [r["id"] for r in rows] == [ids["reef_dive"]]
+    # A country that no dive was made in returns [].
+    rows = dives.list_recent_with_sites(conn, country_code="FR")
+    assert rows == []
+    # A dive with no country (empty_dive) is excluded.
+    assert ids["empty_dive"] not in [
+        r["id"] for r in dives.list_recent_with_sites(conn, country_code="US")
+    ]
+
+
+def test_list_recent_with_sites_filters_by_date_range(
+    conn: sqlite3.Connection,
+) -> None:
+    """Inclusive date_from / date_to bounds on dive.dive_date."""
+    ids = _seed_filter_fixture(conn)
+    # From-only: dives on or after 2024-03-01 → reef_dive + empty_dive.
+    rows = dives.list_recent_with_sites(conn, date_from="2024-03-01")
+    assert sorted(r["id"] for r in rows) == sorted(
+        [ids["reef_dive"], ids["empty_dive"]],
+    )
+    # To-only: dives on or before 2024-03-31 → wreck_dive + reef_dive.
+    rows = dives.list_recent_with_sites(conn, date_to="2024-03-31")
+    assert sorted(r["id"] for r in rows) == sorted(
+        [ids["wreck_dive"], ids["reef_dive"]],
+    )
+    # Both: only reef_dive (Mar 22 is in the window).
+    rows = dives.list_recent_with_sites(
+        conn, date_from="2024-02-01", date_to="2024-04-30",
+    )
+    assert [r["id"] for r in rows] == [ids["reef_dive"]]
+    # Bounds are inclusive on both ends.
+    rows = dives.list_recent_with_sites(
+        conn, date_from="2024-01-15", date_to="2024-01-15",
+    )
+    assert [r["id"] for r in rows] == [ids["wreck_dive"]]
+
+
+def test_list_recent_with_sites_filters_by_notes_substring(
+    conn: sqlite3.Connection,
+) -> None:
+    """Case-insensitive substring on dive.notes; NULLs excluded."""
+    ids = _seed_filter_fixture(conn)
+    # "reef" matches reef_dive (notes say "reef exploration").
+    rows = dives.list_recent_with_sites(conn, notes_substring="reef")
+    assert [r["id"] for r in rows] == [ids["reef_dive"]]
+    # Case-insensitive: "SHARKS" still matches reef_dive.
+    rows = dives.list_recent_with_sites(conn, notes_substring="SHARKS")
+    assert [r["id"] for r in rows] == [ids["reef_dive"]]
+    # empty_dive has notes=NULL — must be excluded when notes_substring is set.
+    rows = dives.list_recent_with_sites(conn, notes_substring="anything")
+    assert ids["empty_dive"] not in [r["id"] for r in rows]
+
+
+def test_list_recent_with_sites_filters_compose_with_and(
+    conn: sqlite3.Connection,
+) -> None:
+    """All four filter dimensions compose with AND.
+
+    A site+country combination that excludes the only candidate
+    returns [] — the engine does not short-circuit on the no-match
+    branch.
+    """
+    ids = _seed_filter_fixture(conn)
+    # Site='Salt Pier' + country='US' + date '2024-01-15' → wreck_dive.
+    rows = dives.list_recent_with_sites(
+        conn,
+        site_name_substring="salt",
+        country_code="US",
+        date_from="2024-01-01",
+        date_to="2024-02-01",
+        notes_substring="propeller",
+    )
+    assert [r["id"] for r in rows] == [ids["wreck_dive"]]
+    # Site='Salt Pier' + country='BS' → no overlap, [].
+    rows = dives.list_recent_with_sites(
+        conn, site_name_substring="salt", country_code="BS",
+    )
+    assert rows == []
+    # No filter (all None) returns all three.
+    rows = dives.list_recent_with_sites(conn)
+    assert sorted(r["id"] for r in rows) == sorted(
+        [ids["wreck_dive"], ids["reef_dive"], ids["empty_dive"]],
+    )
+
+
+def test_distinct_dive_filter_values_excludes_unattached_dives(
+    conn: sqlite3.Connection,
+) -> None:
+    """The country dropdown shows only countries the diver has
+    actually dived in (via a joined site). Dives with no site are
+    not in the list — the user can still see them with the "(All)"
+    option.
+    """
+    _seed_filter_fixture(conn)
+    v = dives.distinct_dive_filter_values(conn)
+    # Both US and BS appear (alphabetical order: Bahamas before US).
+    assert v.countries == [("Bahamas", "BS"), ("United States", "US")]
