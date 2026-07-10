@@ -292,7 +292,7 @@ def test_site_table_model_filter() -> None:
         c = cm.__enter__()
         db.apply_migrations(c)
         try:
-            from open_dive_log.ui.sites_list_window import SiteTableModel
+            from open_dive_log.ui.sites_list_window import SiteFilter, SiteTableModel
             from open_dive_log.repositories import sites as sites_repo
 
             # Seed countries for the country_code FK on site
@@ -354,7 +354,7 @@ def test_site_table_model_set_rows_resets_filter() -> None:
         c = cm.__enter__()
         db.apply_migrations(c)
         try:
-            from open_dive_log.ui.sites_list_window import SiteTableModel
+            from open_dive_log.ui.sites_list_window import SiteFilter, SiteTableModel
             from open_dive_log.repositories import sites as sites_repo
 
             c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
@@ -371,7 +371,7 @@ def test_site_table_model_set_rows_resets_filter() -> None:
 
             # Re-import: set_rows is called with new data
             model.set_rows(sites_repo.list_all(c))
-            assert model.filter() == ""  # filter was reset
+            assert model.filter() == SiteFilter()  # filter was reset
             assert model.rowCount() == 2  # all rows visible again
         finally:
             cm.__exit__(None, None, None)
@@ -469,7 +469,7 @@ def test_site_table_model_set_unit_system_is_noop_if_same() -> None:
         c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
         c.commit()
         try:
-            from open_dive_log.ui.sites_list_window import SiteTableModel
+            from open_dive_log.ui.sites_list_window import SiteFilter, SiteTableModel
             from open_dive_log.repositories import sites as sites_repo
             from open_dive_log.units import UnitSystem
 
@@ -1082,4 +1082,132 @@ def test_qt_sites_list_window_new_action_is_always_enabled() -> None:
         cm.__exit__(None, None, None)
     print('OK: new action is always enabled')
     """))
+
+
+# ---------------------------------------------------------------------------
+# Filter values: dropdown contents reflect only values that exist
+# ---------------------------------------------------------------------------
+def test_distinct_filter_values_only_includes_present_values() -> None:
+    """distinct_filter_values() must return only values that actually
+    appear in the site table, not the full lookup table.
+
+    Seeds 3 sites in different countries / regions / environments /
+    entries, then asserts the returned lists contain exactly those
+    values (and no extras, even when the lookup table has more
+    options than the user's data uses).
+    """
+    from open_dive_log.repositories import sites as sites_repo
+    with tempfile.TemporaryDirectory() as d:
+        cm = db.connect(Path(d) / "filter_values_test.db")
+        c = cm.__enter__()
+        db.apply_migrations(c)
+        try:
+            # Seed two countries (FK on site.country_code)
+            c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("US", "United States"))
+            c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("MX", "Mexico"))
+            c.commit()
+            # Note: we do NOT seed a third country. If the dropdown
+            # showed every value in `country`, it would include the
+            # other 54 rows; the test asserts it doesn't.
+            sites_repo.find_or_create(
+                c, "Blue Hole", country_code="US", region="Florida Keys",
+                environment_id=1, entry_id=1,
+            )
+            sites_repo.find_or_create(
+                c, "Cozumel Deep", country_code="MX", region="Cozumel",
+                environment_id=1, entry_id=2,
+            )
+            sites_repo.find_or_create(
+                c, "Bonaire Shore", country_code="US", region="Bonaire",
+                environment_id=2, entry_id=1,
+            )
+
+            v = sites_repo.distinct_filter_values(c)
+
+            # Countries: exactly US and MX, alphabetized.
+            assert v.countries == [
+                ("Mexico", "MX"),
+                ("United States", "US"),
+            ]
+            # Regions: exactly the three we seeded, alphabetized.
+            assert v.regions == [
+                ("Bonaire", "Bonaire"),
+                ("Cozumel", "Cozumel"),
+                ("Florida Keys", "Florida Keys"),
+            ]
+            # Environments: only the two we used (lookup_site_environment
+            # has 8 rows seeded by the migration; we only used 2 of
+            # them, so the dropdown should show only those 2).
+            assert v.environments == [
+                ("lake", 2),
+                ("ocean", 1),
+            ]
+            # Entries: only the two we used (lookup_entry_type has
+            # 3 rows seeded: shore, boat, other; we only used 2).
+            assert v.entries == [
+                ("boat", 2),
+                ("shore", 1),
+            ]
+        finally:
+            cm.__exit__(None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# Filter list_filtered: criteria compose with AND
+# ---------------------------------------------------------------------------
+def test_list_filtered_criteria_compose_with_and() -> None:
+    """list_filtered() must compose all provided criteria with AND.
+
+    Seeds 3 sites: one in MX/Cozumel, two in US/Florida Keys (one
+    boat-only, one shore). Asserts each filter combination returns
+    the expected subset, and that a combination with no matches
+    returns an empty list (not an error).
+    """
+    from open_dive_log.repositories import sites as sites_repo
+    with tempfile.TemporaryDirectory() as d:
+        cm = db.connect(Path(d) / "list_filtered_test.db")
+        c = cm.__enter__()
+        db.apply_migrations(c)
+        try:
+            c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("US", "United States"))
+            c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("MX", "Mexico"))
+            c.commit()
+            sites_repo.find_or_create(
+                c, "Cozumel Deep", country_code="MX", region="Cozumel",
+                environment_id=1, entry_id=2,
+            )
+            sites_repo.find_or_create(
+                c, "Florida Keys Boat", country_code="US", region="Florida Keys",
+                environment_id=1, entry_id=2,
+            )
+            sites_repo.find_or_create(
+                c, "Florida Keys Shore", country_code="US", region="Florida Keys",
+                environment_id=1, entry_id=1,
+            )
+
+            # Country filter alone: 2 US + 1 MX = 3 (all rows).
+            assert len(sites_repo.list_filtered(c)) == 3
+            assert len(sites_repo.list_filtered(c, country_code="US")) == 2
+            assert len(sites_repo.list_filtered(c, country_code="MX")) == 1
+            # Region filter alone: 2 Florida Keys, 1 Cozumel.
+            assert len(sites_repo.list_filtered(c, region="Florida Keys")) == 2
+            # Country + region: only the two US Florida Keys.
+            rows = sites_repo.list_filtered(c, country_code="US", region="Florida Keys")
+            assert len(rows) == 2
+            assert {r.name for r in rows} == {"Florida Keys Boat", "Florida Keys Shore"}
+            # Country + region + entry: only the boat one.
+            rows = sites_repo.list_filtered(
+                c, country_code="US", region="Florida Keys", entry_id=2,
+            )
+            assert len(rows) == 1
+            assert rows[0].name == "Florida Keys Boat"
+            # No-match combination: empty list, not an error.
+            assert sites_repo.list_filtered(
+                c, country_code="MX", region="Florida Keys",
+            ) == []
+            # Empty-string region and None env behave like "no filter".
+            assert len(sites_repo.list_filtered(c, region="")) == 3
+            assert len(sites_repo.list_filtered(c, environment_id=None)) == 3
+        finally:
+            cm.__exit__(None, None, None)
 
