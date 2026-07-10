@@ -361,7 +361,14 @@ def compute_stats(conn: sqlite3.Connection) -> DiveStats:
 
 
 def list_recent_with_sites(
-    conn: sqlite3.Connection, limit: int = 500
+    conn: sqlite3.Connection,
+    limit: int = 500,
+    *,
+    site_name_substring: str | None = None,
+    country_code: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    notes_substring: str | None = None,
 ) -> list[dict]:
     """Return one row per dive, with the comma-joined site names.
 
@@ -406,9 +413,49 @@ def list_recent_with_sites(
             "end_pressure_bar": float | None,
             "sites": str,         # "Salt Pier, Karpata" or "" if none
         }
+
+    Filter arguments (all optional, all compose with AND):
+
+    * ``site_name_substring``: case-insensitive substring match
+      against any of the dive's joined site names. A dive with
+      no site is excluded when this filter is set.
+    * ``country_code``: exact match on the 3-letter ISO code of
+      any of the dive's joined sites. A dive with no site is
+      excluded.
+    * ``date_from`` / ``date_to``: inclusive ISO date strings
+      (``"YYYY-MM-DD"``). A None bound means "no bound on that
+      side". The match is on the dive's own ``dive_date`` column.
+    * ``notes_substring``: case-insensitive substring match on
+      ``dive.notes``. NULLs are excluded when this filter is set.
+
+    All filters are None by default, so the no-filter case
+    (which is the common case) is one extra branch of parameter
+    passing.
     """
+    # Build the WHERE clause incrementally. The numbered CTE stays
+    # over the entire dive table so display_dive_number is stable
+    # across filters; the WHERE filters the joined result.
+    clauses: list[str] = []
+    params: list[str | int] = []
+    if site_name_substring:
+        clauses.append("(s.name IS NOT NULL AND LOWER(s.name) LIKE ?)")
+        params.append(f"%{site_name_substring.lower()}%")
+    if country_code:
+        clauses.append("s.country_code = ?")
+        params.append(country_code)
+    if date_from:
+        clauses.append("n.dive_date >= ?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("n.dive_date <= ?")
+        params.append(date_to)
+    if notes_substring:
+        clauses.append("(n.notes IS NOT NULL AND LOWER(n.notes) LIKE ?)")
+        params.append(f"%{notes_substring.lower()}%")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
     rows = conn.execute(
-        """
+        f"""
         WITH numbered AS (
             SELECT
                 d.*,
@@ -429,11 +476,12 @@ def list_recent_with_sites(
         FROM numbered n
         LEFT JOIN dive_site ds ON ds.dive_id = n.id
         LEFT JOIN site s ON s.id = ds.site_id
+        {where}
         GROUP BY n.id
         ORDER BY n.id DESC
         LIMIT ?
         """,
-        (limit,),
+        (*params, limit),
     ).fetchall()
     return [
         {
@@ -454,6 +502,51 @@ def list_recent_with_sites(
         }
         for r in rows
     ]
+
+
+@dataclass(frozen=True, slots=True)
+class DiveFilterValues:
+    """Distinct values for the dive-list filter dimensions.
+
+    Only the country dimension needs a precomputed list (the dropdown).
+    Date range is two `QDateEdit` widgets that don't need a list.
+    Site-name and notes are free-text, no list.
+
+    `countries` is the list of distinct country codes the diver has
+    actually dived in (via a joined site). The dropdown shows the
+    country **name** in display order; the SQL key is the 3-letter
+    ISO code. Dives with no site are not in this list (the user
+    can still see them by leaving the dropdown at "(All)").
+    """
+
+    countries: list[tuple[str, str]]   # (country_name, country_code)
+
+
+def distinct_dive_filter_values(conn: sqlite3.Connection) -> DiveFilterValues:
+    """Return the distinct country values present in the dive's
+    joined sites.
+
+    One independent query. Returns the country **name** (resolved
+    via JOIN to the `country` table) in display order, with the
+    3-letter ISO code as the matching key for the WHERE clause.
+
+    Dives with no site are excluded — the user can still see them
+    by leaving the dropdown at "(All)". The function is the
+    "only values that exist" mirror of
+    :func:`sites_repo.distinct_filter_values`: the dropdown
+    shows only countries the diver has actually visited.
+    """
+    rows = conn.execute(
+        "SELECT c.name, s.country_code "
+        "FROM dive d "
+        "JOIN dive_site ds ON ds.dive_id = d.id "
+        "JOIN site s ON s.id = ds.site_id "
+        "JOIN country c ON c.code = s.country_code "
+        "WHERE s.country_code IS NOT NULL "
+        "GROUP BY s.country_code, c.name "
+        "ORDER BY c.name"
+    ).fetchall()
+    return DiveFilterValues(countries=[(r[0], r[1]) for r in rows])
 
 
 # ---------------------------------------------------------------------------
