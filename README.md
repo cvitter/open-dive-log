@@ -27,7 +27,7 @@ data to a cloud service.
 - PySide6 6.8+ (Qt 6 GUI; 6.8.3 and 6.10.3 verified; **6.11.x is broken
   on macOS arm64** — its Cocoa plugin can't be loaded by Qt's plugin
   loader)
-- SQLite 3.53.x (Python's bundled `sqlite3` module)
+- SQLite 3.45.x (Python's bundled `sqlite3` module)
 - pytest 8.x (pinned in `pyproject.toml`; 9.x broke a hard import of
   `pygments`)
 
@@ -38,7 +38,7 @@ brew install python@3.13
 cd open-dive-log
 python3.13 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -c "import sqlite3; print(sqlite3.sqlite_version)"   # 3.53.x
+.venv/bin/python -c "import sqlite3; print(sqlite3.sqlite_version)"   # 3.45.x
 ```
 
 The first time the app launches it will run any pending migrations and
@@ -48,7 +48,7 @@ create `data/open_dive_log.db`.
 
 ```bash
 bin/run-app.sh                       # the GUI
-.venv/bin/python -m pytest           # 206 tests
+.venv/bin/python -m pytest           # 218 tests
 ```
 
 `bin/run-app.sh` is a shell wrapper that handles three macOS
@@ -83,7 +83,12 @@ works without `PYTHONPATH` at all.
   or double-click a row in the list to edit)
 - **11-column dive list**: Dive # · Date · Bottom time · Air temp ·
   Water temp · Visibility · P start · P end · Depth avg · Depth max ·
-  Site. Double-click a row to edit; new dives are pre-selected
+  Site. Double-click a row to edit; new dives are pre-selected.
+  **Dive # is chronological** (1 = the earliest dive in time,
+  n = the most recent), not the row id — so backdating a dive
+  renumbers everything after it the way a paper logbook would.
+  The internal id stays stable and is exposed via the table's
+  UserRole for selection / lookup.
 - **Inline site creation**: while logging a dive, you can add a brand
   new site on the fly — it shows up in the Sites window once the
   dive is saved
@@ -174,8 +179,17 @@ The DDL lives in `src/open_dive_log/migrations/`:
 | `002_opendivemap.sql` | v2 | Country table, opendivemap site topology/environment, external-id plumbing, 3,123 site rows |
 | `003_site_descriptions.sql` | v3 | `site.description` and `site.description_wildlife` (text columns from the upstream tags bag) |
 | `004_certifications.sql` | v4 | Cert-agency lookup, `certification` table enhancements |
-| `005_dive_conditions.sql` | v5 | `dive.air_temp_c`, `dive.water_temp_c`, `dive.visibility_m` with range CHECK constraints |
-| `006_dive_pressure.sql` | v6 | `dive.start_pressure_bar`, `dive.end_pressure_bar` (CHECK 0..350 BAR = 0..5076 PSI) |
+| `005_dive_conditions.sql` | v5 | `dive.air_temp_c`, `dive.water_temp_c`, `dive.visibility_m` with range checks enforced via INSERT/UPDATE triggers (SQLite 3.45+ compatible) |
+| `006_dive_pressure.sql` | v6 | `dive.start_pressure_bar`, `dive.end_pressure_bar` (range 0..350 BAR = 0..5076 PSI, also via triggers) |
+
+Note on the v5/v6 range checks: SQLite 3.53+ supports `ALTER TABLE
+... ADD CONSTRAINT ... CHECK (...)` natively, which is what the
+original migrations used. We deliberately rewrote these to use
+BEFORE INSERT/UPDATE triggers so the project can run on any
+SQLite 3.45+ (the GitHub-hosted Ubuntu runner ships 3.45.1).
+The trigger pattern is functionally equivalent — every insert and
+update is checked, and out-of-range values abort the operation
+with a clear `RAISE(ABORT, '... out of range ...')` message.
 
 Key design choices:
 
@@ -221,7 +235,11 @@ open-dive-log/
 │       ├── cert_list_window.py
 │       ├── lookups_list_window.py
 │       └── stats_window.py
-├── tests/                           # 206 tests; pytest < 9
+├── tests/                           # 218 tests; pytest < 9
+│   ├── conftest.py                  # autouse live-DB safety net + Qt subprocess helper
+│   ├── test_conftest_safety.py      # regression tests for the conftest's safety net
+│   ├── test_dive_table_model.py     # the DiveTableModel + DiveRow contract
+│   └── ...                          # one test file per repository / module
 ├── CONTRIBUTING.md                  # dev setup, conventions, PR process
 ├── CODE_OF_CONDUCT.md               # Contributor Covenant 2.1
 └── .github/
@@ -242,9 +260,12 @@ open-dive-log/
 
 Tests that need a real Qt event loop use the `offscreen` platform
 plugin and run in a subprocess so a broken `libqcocoa.dylib` doesn't
-take down the rest of the suite. There are 206 tests; the 2 that
+take down the rest of the suite. There are 218 tests; the 2 that
 skip are pre-existing environmental Qt subprocess issues, not
-regressions.
+regressions. Every test runs against a tmp-path DB (the
+`tests/conftest.py` autouse fixture monkey-patches
+`db.DEFAULT_DB_PATH` so a stray `db.connect()` with no arguments
+opens a tmp file, not the live `data/open_dive_log.db`).
 
 ## Tech notes
 
@@ -385,6 +406,9 @@ are not yet implemented. Listed roughly in priority order.
 - **Test data generator** — a CLI subcommand that seeds a
   development DB with N synthetic dives across the existing
   opendivemap sites, for UI work and screenshot demos.
+  [PR #20](https://github.com/cvitter/open-dive-log/pull/20) is
+  in review; it includes a `--force` guard request from this
+  reviewer before the safety work above is fully covered.
 - **The 6 remaining opendivemap tags** — the importer currently
   pulls `description` and `description_wildlife`. The upstream
   also exposes `average_vis_m`, `average_divetime_min`,

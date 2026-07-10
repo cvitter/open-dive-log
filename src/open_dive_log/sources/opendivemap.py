@@ -118,7 +118,7 @@ def iter_sites(
             yield _feature_to_odm(feature)
         # Follow the `next` link if present.
         next_link = next(
-            (l["href"] for l in data.get("links", []) if l.get("rel") == "next"),
+            (link["href"] for link in data.get("links", []) if link.get("rel") == "next"),
             None,
         )
         url = next_link

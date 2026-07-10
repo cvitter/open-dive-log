@@ -26,7 +26,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_DB_PATH = DATA_DIR / "open_dive_log.db"
 MIGRATIONS_PACKAGE = "open_dive_log.migrations"
 
-REQUIRED_SQLITE_VERSION = (3, 53, 0)
+REQUIRED_SQLITE_VERSION = (3, 45, 0)
 
 
 def get_sqlite_version() -> str:

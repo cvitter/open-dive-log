@@ -9,9 +9,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 from . import buddies, sites
+
+if TYPE_CHECKING:
+    from .buddies import Buddy
+    from .sites import Site
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,9 +374,25 @@ def list_recent_with_sites(
     imperial mode. The fields are metric in the DB; the list view does
     the conversion at display time.
 
+    Each row also carries ``display_dive_number`` — the dive's
+    chronological position in the logbook, 1 = the earliest dive in
+    time, n = the most recent. This is computed by a window
+    function over the entire ``dive`` table (not just the rows
+    in this result set) so the number is stable as the user
+    scrolls or filters, and so adding a new backdated dive
+    renumbers everything above it the way a diver would expect.
+
+    The list is sorted by ``d.id DESC`` (newest inserted at the
+    top) for display order; the *number* the UI shows in column 0
+    is the chronological ``display_dive_number``, not the row id.
+    Callers that need the stable internal key (selection, lookup
+    by primary key, double-click → detail) should use ``id``,
+    not ``display_dive_number``.
+
     Returned dict shape (stable for the UI layer):
         {
-            "id": int,
+            "id": int,                          # stable PK
+            "display_dive_number": int,         # 1 = earliest, n = latest
             "dive_date": str,
             "start_time": str | None,
             "end_time": str | None,
@@ -389,17 +409,28 @@ def list_recent_with_sites(
     """
     rows = conn.execute(
         """
+        WITH numbered AS (
+            SELECT
+                d.*,
+                ROW_NUMBER() OVER (
+                    ORDER BY d.dive_date ASC,
+                             d.start_time ASC NULLS LAST,
+                             d.id ASC
+                ) AS display_dive_number
+            FROM dive d
+        )
         SELECT
-            d.id, d.dive_date, d.start_time, d.end_time,
-            d.dive_time_minutes, d.max_depth_m, d.avg_depth_m,
-            d.air_temp_c, d.water_temp_c, d.visibility_m,
-            d.start_pressure_bar, d.end_pressure_bar,
+            n.id, n.display_dive_number,
+            n.dive_date, n.start_time, n.end_time,
+            n.dive_time_minutes, n.max_depth_m, n.avg_depth_m,
+            n.air_temp_c, n.water_temp_c, n.visibility_m,
+            n.start_pressure_bar, n.end_pressure_bar,
             GROUP_CONCAT(s.name, ', ') AS sites
-        FROM dive d
-        LEFT JOIN dive_site ds ON ds.dive_id = d.id
+        FROM numbered n
+        LEFT JOIN dive_site ds ON ds.dive_id = n.id
         LEFT JOIN site s ON s.id = ds.site_id
-        GROUP BY d.id
-        ORDER BY d.id DESC
+        GROUP BY n.id
+        ORDER BY n.id DESC
         LIMIT ?
         """,
         (limit,),
@@ -407,6 +438,7 @@ def list_recent_with_sites(
     return [
         {
             "id": r["id"],
+            "display_dive_number": r["display_dive_number"],
             "dive_date": r["dive_date"],
             "start_time": r["start_time"],
             "end_time": r["end_time"],

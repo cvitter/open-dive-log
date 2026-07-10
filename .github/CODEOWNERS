@@ -1,0 +1,16 @@
+# CODEOWNERS
+#
+# Every change to every file in this repo requires review from the
+# owner listed below. With branch protection on `main` set to
+# "Require review from Code Owners," this means no PR can merge
+# without @cvitter approving it.
+#
+# The syntax is `<pattern> <owner>`; the *last* matching pattern
+# wins, so the catch-all at the bottom is the actual rule and the
+# specific lines above it are documentation (they confirm that
+# sensitive areas explicitly belong to the maintainer).
+#
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: maintainer owns everything.
+/*    @cvitter

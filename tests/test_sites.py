@@ -13,9 +13,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
-import sys
 import tempfile
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -170,44 +168,21 @@ def test_list_blocking_dives_returns_at_most_10(
 # ---------------------------------------------------------------------------
 # Qt dialog: subprocess-isolated tests
 # ---------------------------------------------------------------------------
+# Qt can crash the test runner when libqcocoa.dylib is broken (see
+# README's macOS PySide6 caveat), so the real QApplication is built
+# in a subprocess via the conftest's `run_qt_subprocess` helper.
+# The bootstrap lives there so the env-setup pattern (PYTHONPATH,
+# QT_QPA_PLATFORM) stays in one place.
+
+
 def _run_qt_test(test_source: str) -> subprocess.CompletedProcess:
     """Run a Qt test snippet in a subprocess. Returns the result.
 
-    Mirrors the pattern in tests/test_ui.py. If Qt can't init in the
-    subprocess, the test should be reported as a skip rather than
-    crashing the whole test run.
+    Thin wrapper around ``tests.conftest.run_qt_subprocess`` so this
+    file's existing call sites don't have to change.
     """
-    bootstrap = textwrap.dedent(
-        """
-        import sys
-        import os
-        # 'offscreen' is a built-in Qt platform plugin and doesn't
-        # need the cocoa dylib, so this works on a fresh venv that
-        # has the (unremovable) com.apple.provenance xattr on
-        # libqcocoa.dylib. We use it for ALL Qt subprocess tests
-        # in this project to keep the venv working.
-        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-        try:
-            from PySide6.QtWidgets import QApplication
-        except Exception as e:
-            print(f'SKIP: PySide6 import failed: {e}')
-            sys.exit(0)
-        try:
-            app = QApplication.instance() or QApplication([])
-        except Exception as e:
-            print(f'SKIP: QApplication init failed: {e}')
-            sys.exit(0)
-        if app is None:
-            print('SKIP: QApplication returned None')
-            sys.exit(0)
-        """
-    )
-    full = bootstrap + textwrap.dedent(test_source)
-    return subprocess.run(
-        [sys.executable, "-c", full],
-        capture_output=True, text=True,
-        env={**os.environ, "PYTHONPATH": "src"},
-    )
+    from tests.conftest import run_qt_subprocess
+    return run_qt_subprocess(test_source)
 
 
 def _assert_qt_ok(result: subprocess.CompletedProcess) -> None:
@@ -310,7 +285,7 @@ def test_site_table_model_filter() -> None:
     insensitive substring match on the name. Empty filter shows all."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "filter_test.db"))
@@ -372,7 +347,7 @@ def test_site_table_model_set_rows_resets_filter() -> None:
     fresh data on a re-import."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "filter_reset_test.db"))
@@ -410,7 +385,7 @@ def test_site_table_model_metric_max_depth() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import Qt
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "depth_metric.db"))
@@ -433,7 +408,6 @@ def test_site_table_model_metric_max_depth() -> None:
             assert headers[COL_MAX_DEPTH][0] == "Max depth (m)"
 
             # Read the data cell for the max-depth column
-            from PySide6.QtCore import QModelIndex
             idx = model.index(0, COL_MAX_DEPTH)
             assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "18"
         finally:
@@ -449,7 +423,7 @@ def test_site_table_model_imperial_max_depth_converts() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import Qt
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "depth_imperial.db"))
@@ -472,7 +446,6 @@ def test_site_table_model_imperial_max_depth_converts() -> None:
             model.set_unit_system(UnitSystem.IMPERIAL)
             headers = _build_headers(model.unit_system())
             assert headers[COL_MAX_DEPTH][0] == "Max depth (ft)"
-            from PySide6.QtCore import QModelIndex
             idx = model.index(0, COL_MAX_DEPTH)
             # 18 m = 59.0551... ft, formatted as '59.1'
             assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "59.1"
@@ -487,7 +460,7 @@ def test_site_table_model_set_unit_system_is_noop_if_same() -> None:
     unchanged."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "noop.db"))
@@ -535,7 +508,7 @@ def test_site_dialog_max_depth_imperial_displays_and_converts() -> None:
         from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
         from open_dive_log.units import UnitSystem
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
 
         cm = connect(':memory:')
@@ -588,7 +561,7 @@ def test_site_dialog_max_depth_metric_passthrough() -> None:
         from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
         from open_dive_log.units import UnitSystem
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
 
         cm = connect(':memory:')
@@ -631,7 +604,7 @@ def test_sites_list_window_edit_from_selection_opens_dialog() -> None:
         from open_dive_log.repositories import sites as sites_repo
         from open_dive_log.ui.sites_list_window import SitesListWindow
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         tmp = tempfile.mkdtemp()
         cm = connect(os.path.join(tmp, 'win.db'))
         c = cm.__enter__()
@@ -681,7 +654,7 @@ def test_sites_list_window_edit_persists_country_code() -> None:
         from open_dive_log.repositories import sites as sites_repo
         from open_dive_log.ui.sites_list_window import SitesListWindow
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         tmp = tempfile.mkdtemp()
         cm = connect(os.path.join(tmp, 'regress.db'))
         c = cm.__enter__()
@@ -748,7 +721,7 @@ def test_sites_list_window_no_selection_disables_actions() -> None:
         from open_dive_log.repositories import sites as sites_repo
         from open_dive_log.ui.sites_list_window import SitesListWindow
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         tmp = tempfile.mkdtemp()
         cm = connect(os.path.join(tmp, 'win2.db'))
         c = cm.__enter__()
@@ -787,7 +760,7 @@ def test_sites_list_window_filter_updates_status_bar() -> None:
         from open_dive_log.repositories import sites as sites_repo
         from open_dive_log.ui.sites_list_window import SitesListWindow
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         tmp = tempfile.mkdtemp()
         cm = connect(os.path.join(tmp, 'win3.db'))
         c = cm.__enter__()
@@ -932,7 +905,7 @@ def test_qt_sites_list_window_new_action_creates_site() -> None:
     from open_dive_log.ui.sites_list_window import SitesListWindow
     from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
 
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
     # Auto-confirm any QMessageBox (the duplicate-name error path
     # would surface one; we don't want it to block).
     QMessageBox.critical = staticmethod(
@@ -1015,7 +988,7 @@ def test_qt_sites_list_window_new_action_handles_duplicate() -> None:
     from open_dive_log.ui.sites_list_window import SitesListWindow
     from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
 
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     # Capture any QMessageBox.critical calls
     critical_calls: list[tuple[str, str]] = []
@@ -1088,7 +1061,7 @@ def test_qt_sites_list_window_new_action_is_always_enabled() -> None:
     from open_dive_log.db import connect, apply_migrations
     from open_dive_log.ui.sites_list_window import SitesListWindow
 
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     cm = connect(':memory:')
     c = cm.__enter__()

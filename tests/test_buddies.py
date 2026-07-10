@@ -109,37 +109,17 @@ def test_count_referencing_dives_counts_links(
 
 # ------------------------------------------------------------ BuddiesListWindow
 # These are subprocess tests — they construct a real QApplication and a
-# real BuddiesListWindow. They use the same `_run_qt_test` helper pattern
-# as test_sites.py / test_ui.py to isolate Qt crashes from the test
-# runner.
-
-_SUBPROCESS_BOOTSTRAP = """\
-import os, sys
-os.environ.setdefault("QT_QPA_PLATFORM", "cocoa")
-os.environ.setdefault("PYTHONPATH", "src")
-"""
+# real BuddiesListWindow. The subprocess bootstrap lives in
+# tests/conftest.py as `run_qt_subprocess` so the env-setup pattern
+# stays in one place.
 
 
-def _run_qt_test(source: str) -> "subprocess.CompletedProcess[str]":  # type: ignore[name-defined]
-    """Run a Qt test in a subprocess.
-
-    The test source should print "OK: ..." lines (one per assertion
-    that succeeded) to stdout. If the first line is "SKIP:" we treat
-    the test as skipped (e.g. Qt can't initialize). Otherwise an
-    exception or non-zero exit is a failure.
+def _run_qt_test(source: str):  # type: ignore[no-untyped-def]
+    """Deprecated: call the conftest's ``run_qt_subprocess`` directly.
+    Kept as a thin wrapper so existing tests don't have to change.
     """
-    import subprocess
-    import textwrap
-
-    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    full = _SUBPROCESS_BOOTSTRAP + textwrap.dedent(source)
-    return subprocess.run(
-        [".venv/bin/python", "-c", full],
-        capture_output=True,
-        text=True,
-        cwd=PROJECT_ROOT,
-        timeout=30,
-    )
+    from tests.conftest import run_qt_subprocess
+    return run_qt_subprocess(source)
 
 
 def test_buddies_list_window_constructs_empty_db() -> None:

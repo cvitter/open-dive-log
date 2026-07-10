@@ -18,11 +18,18 @@ Columns (imperial mode shown in parens):
     9  Depth max      (m / ft)
    10  Site
 
-Dive # is the dive's primary key (1 = first inserted, n = most recent).
-The list sorts newest first by `dive_date DESC, start_time DESC`, so
-the row at the top has the highest id (the latest dive) and the row
-at the bottom has id 1 (the first dive you ever logged). Matches how
-divers talk ("what was dive #50?") and how logbook apps typically work.
+Dive # is the dive's chronological position (1 = the earliest dive
+in time, n = the most recent). The list sorts newest first by
+``dive_date DESC, start_time DESC``, so the row at the top is the
+most recent dive and the row at the bottom is the earliest. This
+matches how divers talk ("what was dive #50?") and how logbook apps
+typically work.
+
+The internal ``d.id`` is the stable primary key and never changes
+— adding a backdated dive doesn't renumber existing ids, but it
+*will* shift the displayed Dive # for every dive that came after
+the backdated one in chronological time. This is the intended
+behavior.
 
 The column *header* text updates when the unit system changes (via
 `set_unit_system`), so the table column captions stay in sync with
@@ -66,7 +73,7 @@ def _build_headers(system: UnitSystem) -> tuple[tuple[str, str], ...]:
     """Return the (label, tooltip) tuple for all columns in the chosen system."""
     if system == UnitSystem.METRIC:
         return (
-            ("Dive #", "The dive's id (1 = first inserted, n = latest)."),
+            ("Dive #", "Chronological position (1 = earliest in time, n = latest). The internal id is the stable primary key; see the table's UserRole data."),
             ("Date", "Dive date (YYYY-MM-DD). Sorted newest first."),
             ("Bottom time (min)", "Total time underwater, in minutes."),
             ("Air temp (°C)", "Surface air temperature on the day of the dive, in °C."),
@@ -79,7 +86,7 @@ def _build_headers(system: UnitSystem) -> tuple[tuple[str, str], ...]:
             ("Site", "Dive site(s), comma-separated if more than one."),
         )
     return (
-        ("Dive #", "The dive's id (1 = first inserted, n = latest)."),
+        ("Dive #", "Chronological position (1 = earliest in time, n = latest). The internal id is the stable primary key; see the table's UserRole data."),
         ("Date", "Dive date (YYYY-MM-DD). Sorted newest first."),
         ("Bottom time (min)", "Total time underwater, in minutes."),
         ("Air temp (°F)", "Surface air temperature on the day of the dive, in °F."),
@@ -95,8 +102,15 @@ def _build_headers(system: UnitSystem) -> tuple[tuple[str, str], ...]:
 
 @dataclass(frozen=True, slots=True)
 class DiveRow:
-    """The shape consumed by the QTableView. Stores DB values (metric)."""
+    """The shape consumed by the QTableView. Stores DB values (metric).
+
+    ``id`` is the stable primary key. ``display_dive_number`` is the
+    chronological position (1 = the earliest dive in time, n = the
+    most recent) and is what the UI shows in column 0. See
+    :func:`dives.list_recent_with_sites` for the full rationale.
+    """
     id: int
+    display_dive_number: int
     dive_date: str
     sites: str
     bottom_time_min: int | None
@@ -194,12 +208,15 @@ def load_rows(conn: sqlite3.Connection, limit: int = 500) -> list[DiveRow]:
 
     Reads all the dive + conditions + pressure columns and the
     comma-joined site names. The DB always returns them in metric;
-    the presentation layer does the unit conversion.
+    the presentation layer does the unit conversion. The
+    chronological display number comes from the SQL window
+    function; see :func:`dives.list_recent_with_sites`.
     """
     raw = dives.list_recent_with_sites(conn, limit=limit)
     return [
         DiveRow(
             id=r["id"],
+            display_dive_number=r["display_dive_number"],
             dive_date=r["dive_date"],
             sites=r["sites"],
             bottom_time_min=r.get("dive_time_minutes"),
@@ -286,7 +303,10 @@ class DiveTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             if col == COL_DIVE_NUM:
-                return str(row.id)
+                # Show the chronological position, not the internal id.
+                # Internal id is exposed via UserRole (below) for code
+                # that needs a stable handle (selection, lookup, etc).
+                return str(row.display_dive_number)
             if col == COL_DATE:
                 return row.dive_date
             if col == COL_BOTTOM_TIME:

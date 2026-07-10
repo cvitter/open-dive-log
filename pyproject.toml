@@ -42,3 +42,9 @@ target-version = "py314"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Custom markers used in the test suite. ``allow_live_db`` is the
+# only opt-out from the conftest's autouse safety net; see
+# tests/conftest.py for why it exists.
+markers = [
+    "allow_live_db: opt out of the conftest's live-DB safety net (no test should need this)",
+]

@@ -8,13 +8,11 @@ import os
 import sqlite3
 import subprocess
 import tempfile
-import textwrap
 
 import pytest
 
 from open_dive_log.db import apply_migrations, connect
 from open_dive_log.repositories import lookups as lk
-from open_dive_log.repositories.lookups import LOOKUP_TABLES, LookupValue
 
 
 # --------------------------------------------------------------------- repo
@@ -179,21 +177,13 @@ def test_count_referencing_counts_certification_links(
 def _subprocess_test(source: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     """Run a Qt test source in a subprocess. The source should print
     'OK: ...' to indicate success; 'SKIP:' to be skipped.
+
+    Thin wrapper around ``tests.conftest.run_qt_subprocess``. The
+    subprocess bootstrap (env + QApplication init) lives in the
+    conftest so the pattern stays in one place.
     """
-    bootstrap = (
-        "import os, sys\n"
-        "os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')\n"
-        "os.environ.setdefault('PYTHONPATH', 'src')\n"
-    )
-    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    full = bootstrap + textwrap.dedent(source)
-    return subprocess.run(
-        [".venv/bin/python", "-c", full],
-        capture_output=True,
-        text=True,
-        cwd=PROJECT_ROOT,
-        timeout=timeout,
-    )
+    from tests.conftest import run_qt_subprocess
+    return run_qt_subprocess(source, timeout=timeout)
 
 
 def test_lookups_window_constructs_with_seeded_data() -> None:

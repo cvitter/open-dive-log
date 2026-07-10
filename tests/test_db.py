@@ -1,6 +1,5 @@
 """Smoke tests for the SQLite access layer."""
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -25,7 +24,14 @@ def test_connect_creates_db_and_enables_wal(tmp_path: Path) -> None:
     assert db_path.exists()
 
 
+@pytest.mark.allow_live_db
 def test_default_db_path_under_data_dir() -> None:
+    """The default DB path lives at <project>/data/open_dive_log.db.
+
+    Marked ``allow_live_db`` because the conftest's autouse fixture
+    otherwise monkeypatches ``DEFAULT_DB_PATH`` to a tmp_path file —
+    which is exactly what we don't want for this test.
+    """
     default = db.get_default_db_path()
     assert default.parent.name == "data"
     assert default.name == "open_dive_log.db"
