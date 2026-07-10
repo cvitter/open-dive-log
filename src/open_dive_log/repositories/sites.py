@@ -51,6 +51,28 @@ class ExternalId:
     external_url: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class SiteFilterValues:
+    """Distinct values for the four filterable dimensions, restricted
+    to values that actually appear in the ``site`` table.
+
+    Each field is a list of ``(label, key)`` pairs in display order.
+    ``label`` is what the user sees in the dropdown; ``key`` is what
+    the WHERE clause matches on. Country is keyed on the 3-letter
+    ISO code (e.g. ``"USA"``); region is keyed on the free-text
+    value; environment and entry are keyed on the lookup-table id.
+
+    The lists are alphabetized by label so the dropdown reads
+    predictably. Empty list = no sites use that dimension at all
+    (the dropdown will show only the blank "All" option).
+    """
+
+    countries: list[tuple[str, str]]      # (country_name, country_code)
+    regions: list[tuple[str, str]]        # (region, region)  (key == label)
+    environments: list[tuple[str, int]]   # (env_name, env_id)
+    entries: list[tuple[str, int]]        # (entry_name, entry_id)
+
+
 # ---------------------------------------------------------------------------
 # Reads
 # ---------------------------------------------------------------------------
@@ -106,6 +128,105 @@ def list_all(conn: sqlite3.Connection) -> list[Site]:
         "LEFT JOIN lookup_site_environment le ON le.id = s.environment_id "
         "LEFT JOIN lookup_entry_type le2 ON le2.id = s.entry_id "
         "ORDER BY s.name"
+    ).fetchall()
+    return [_row_to_site(r) for r in rows]
+
+
+def distinct_filter_values(conn: sqlite3.Connection) -> SiteFilterValues:
+    """Return the distinct values that actually appear in the site
+    table for each of the four filterable dimensions.
+
+    Only values present in the user's data are returned — empty
+    list means "no sites use this dimension at all" (the dropdown
+    will show only the blank "All" option, which is correct).
+
+    The four queries are independent and cheap. Each runs in
+    microseconds against a 3k-row site table.
+
+    Country and region are not deduplicated against the
+    ``country`` and region lookup tables in the sense of "if a
+    value exists in lookup but not in site, exclude it" — we
+    drive the list from the site table itself, not from any
+    lookup. This is the contract documented on
+    :class:`SiteFilterValues`.
+    """
+    countries_rows = conn.execute(
+        "SELECT c.name, s.country_code "
+        "FROM site s JOIN country c ON c.code = s.country_code "
+        "WHERE s.country_code IS NOT NULL "
+        "GROUP BY s.country_code, c.name "
+        "ORDER BY c.name"
+    ).fetchall()
+    regions_rows = conn.execute(
+        "SELECT region FROM site "
+        "WHERE region IS NOT NULL AND region != '' "
+        "GROUP BY region "
+        "ORDER BY region"
+    ).fetchall()
+    envs_rows = conn.execute(
+        "SELECT le.name, s.environment_id "
+        "FROM site s JOIN lookup_site_environment le ON le.id = s.environment_id "
+        "WHERE s.environment_id IS NOT NULL "
+        "GROUP BY s.environment_id, le.name "
+        "ORDER BY le.name"
+    ).fetchall()
+    entries_rows = conn.execute(
+        "SELECT le.name, s.entry_id "
+        "FROM site s JOIN lookup_entry_type le ON le.id = s.entry_id "
+        "WHERE s.entry_id IS NOT NULL "
+        "GROUP BY s.entry_id, le.name "
+        "ORDER BY le.name"
+    ).fetchall()
+    return SiteFilterValues(
+        countries=[(r[0], r[1]) for r in countries_rows],
+        regions=[(r[0], r[0]) for r in regions_rows],
+        environments=[(r[0], r[1]) for r in envs_rows],
+        entries=[(r[0], r[1]) for r in entries_rows],
+    )
+
+
+def list_filtered(
+    conn: sqlite3.Connection,
+    *,
+    country_code: str | None = None,
+    region: str | None = None,
+    environment_id: int | None = None,
+    entry_id: int | None = None,
+) -> list[Site]:
+    """Return sites matching the given filter criteria.
+
+    Each criterion is an exact match on the joined column. ``None``
+    (or empty string for ``region``) means "don't filter on this
+    dimension". Criteria compose with AND: country=US AND
+    environment=Reef returns only US reefs.
+
+    The implementation builds a parameterised SQL string — never
+    string-interpolates user values, even though the only caller
+    is the UI (whose values come from the lookup table).
+    """
+    clauses: list[str] = []
+    params: list[str | int] = []
+    if country_code:
+        clauses.append("s.country_code = ?")
+        params.append(country_code)
+    if region:
+        clauses.append("s.region = ?")
+        params.append(region)
+    if environment_id is not None:
+        clauses.append("s.environment_id = ?")
+        params.append(environment_id)
+    if entry_id is not None:
+        clauses.append("s.entry_id = ?")
+        params.append(entry_id)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        f"SELECT {_COLS} FROM site s "
+        "LEFT JOIN country c ON c.code = s.country_code "
+        "LEFT JOIN lookup_site_environment le ON le.id = s.environment_id "
+        "LEFT JOIN lookup_entry_type le2 ON le2.id = s.entry_id"
+        f"{where} "
+        "ORDER BY s.name",
+        params,
     ).fetchall()
     return [_row_to_site(r) for r in rows]
 
