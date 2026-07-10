@@ -39,6 +39,7 @@ the view to re-fetch all cells after a unit change.
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -52,6 +53,29 @@ from open_dive_log.units import (
     c_to_f,
     m_to_ft,
 )
+
+
+# Filter expression for the dive list. Composes with AND. None or
+# empty string on any field = "no filter on this dimension".
+# ``date_from`` and ``date_to`` are ISO strings ("YYYY-MM-DD") or
+# None. ``country_code`` is the 3-letter ISO code (e.g. "USA" /
+# "US") — same as the value stored in `site.country_code`.
+@dataclasses.dataclass(frozen=True, slots=True)
+class DiveFilter:
+    site_name_substring: str = ""
+    country_code: str = ""
+    date_from: str = ""
+    date_to: str = ""
+    notes_substring: str = ""
+
+    def is_empty(self) -> bool:
+        return not (
+            self.site_name_substring
+            or self.country_code
+            or self.date_from
+            or self.date_to
+            or self.notes_substring
+        )
 
 
 # Column index constants
@@ -203,7 +227,11 @@ _RIGHT_ALIGNED = (
 )
 
 
-def load_rows(conn: sqlite3.Connection, limit: int = 500) -> list[DiveRow]:
+def load_rows(
+    conn: sqlite3.Connection,
+    limit: int = 500,
+    filter: DiveFilter | None = None,
+) -> list[DiveRow]:
     """Pure-Python row loader — no Qt. Reused by tests.
 
     Reads all the dive + conditions + pressure columns and the
@@ -211,8 +239,21 @@ def load_rows(conn: sqlite3.Connection, limit: int = 500) -> list[DiveRow]:
     the presentation layer does the unit conversion. The
     chronological display number comes from the SQL window
     function; see :func:`dives.list_recent_with_sites`.
+
+    ``filter`` is a :class:`DiveFilter` (or None for no filter).
+    All filter fields compose with AND; the SQL implementation
+    is in :func:`dives.list_recent_with_sites`.
     """
-    raw = dives.list_recent_with_sites(conn, limit=limit)
+    f = filter or DiveFilter()
+    raw = dives.list_recent_with_sites(
+        conn,
+        limit=limit,
+        site_name_substring=f.site_name_substring or None,
+        country_code=f.country_code or None,
+        date_from=f.date_from or None,
+        date_to=f.date_to or None,
+        notes_substring=f.notes_substring or None,
+    )
     return [
         DiveRow(
             id=r["id"],

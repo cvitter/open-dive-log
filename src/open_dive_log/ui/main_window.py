@@ -25,10 +25,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QComboBox,
+    QDateEdit,
     QHeaderView,
+    QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QStatusBar,
@@ -43,7 +47,7 @@ from open_dive_log.units import UnitSystem
 from open_dive_log.ui.cert_add_edit_dialog import CertAddEditDialog  # noqa: F401
 from open_dive_log.ui.cert_list_window import CertListWindow
 from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
-from open_dive_log.ui.dive_table_model import DiveTableModel, load_rows
+from open_dive_log.ui.dive_table_model import DiveFilter, DiveTableModel, load_rows
 from open_dive_log.ui.sites_list_window import SitesListWindow
 from open_dive_log.ui.buddies_list_window import BuddiesListWindow
 from open_dive_log.ui.stats_window import StatsWindow
@@ -149,6 +153,64 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._action_new_dive)
         toolbar.addAction(self._action_edit_dive)
         toolbar.addAction(self._action_delete_dive)
+
+        # --- Filter row (issue #2) -------------------------------------
+        # Site-name substring search.
+        toolbar.addSeparator()
+        toolbar.addWidget(QLabel(" Site: "))
+        self._filter_site_name = QLineEdit()
+        self._filter_site_name.setPlaceholderText("Filter by site name…")
+        self._filter_site_name.setClearButtonEnabled(True)
+        self._filter_site_name.setMinimumWidth(160)
+        self._filter_site_name.textChanged.connect(self._on_filter_changed)
+        toolbar.addWidget(self._filter_site_name)
+        # Esc clears the search box (issue #2 acceptance criterion).
+        self._install_esc_clears(self._filter_site_name)
+
+        # Country dropdown (only countries the diver has actually
+        # dived in, populated by distinct_dive_filter_values()).
+        toolbar.addWidget(QLabel("  Country: "))
+        self._filter_country = QComboBox()
+        self._filter_country.setMinimumWidth(140)
+        self._filter_country.currentIndexChanged.connect(self._on_filter_changed)
+        toolbar.addWidget(self._filter_country)
+
+        # Date range (from / to).
+        toolbar.addWidget(QLabel("  From: "))
+        self._filter_date_from = QDateEdit()
+        self._filter_date_from.setCalendarPopup(True)
+        self._filter_date_from.setDisplayFormat("yyyy-MM-dd")
+        self._filter_date_from.setSpecialValueText(" ")  # show blank when cleared
+        self._filter_date_from.setDate(self._filter_date_from.minimumDate())
+        self._filter_date_from.dateChanged.connect(self._on_filter_changed)
+        toolbar.addWidget(self._filter_date_from)
+        toolbar.addWidget(QLabel("  To: "))
+        self._filter_date_to = QDateEdit()
+        self._filter_date_to.setCalendarPopup(True)
+        self._filter_date_to.setDisplayFormat("yyyy-MM-dd")
+        self._filter_date_to.setSpecialValueText(" ")
+        self._filter_date_to.setDate(self._filter_date_to.minimumDate())
+        self._filter_date_to.dateChanged.connect(self._on_filter_changed)
+        toolbar.addWidget(self._filter_date_to)
+
+        # Notes substring.
+        toolbar.addWidget(QLabel("  Notes: "))
+        self._filter_notes = QLineEdit()
+        self._filter_notes.setPlaceholderText("Search notes…")
+        self._filter_notes.setClearButtonEnabled(True)
+        self._filter_notes.setMinimumWidth(160)
+        self._filter_notes.textChanged.connect(self._on_filter_changed)
+        toolbar.addWidget(self._filter_notes)
+        self._install_esc_clears(self._filter_notes)
+
+        # Clear filters action.
+        self._action_clear_filters = QAction("&Clear filters", self)
+        self._action_clear_filters.setStatusTip(
+            "Reset the site search, country, date range, and notes to defaults"
+        )
+        self._action_clear_filters.triggered.connect(self._on_clear_filters)
+        self._action_clear_filters.setEnabled(False)
+        toolbar.addAction(self._action_clear_filters)
 
         # --- Child windows we keep references to (so they don't get GC'd) -
         self._sites_window: SitesListWindow | None = None
@@ -283,17 +345,186 @@ class MainWindow(QMainWindow):
     # Actions
     # ------------------------------------------------------------------
     def _refresh_dive_list(self) -> None:
-        rows = load_rows(self._conn, limit=500)
+        """Reload the dive list, applying the current filter.
+
+        Called on app start, after any add/edit/delete, and from
+        the Dives > List Dives menu action. The filter (site
+        substring, country, date range, notes) is preserved
+        across refreshes — that's the "persists for the session"
+        contract from issue #2.
+        """
+        f = self._current_dive_filter()
+        rows = load_rows(self._conn, limit=500, filter=f)
         self._model.set_rows(rows)
-        self.statusBar().showMessage(
-            f"{len(rows)} dive(s) shown · SQLite {get_sqlite_version()} · "
-            f"schema v{self._schema_version}",
-            5000,
-        )
+        # Populate the country dropdown lazily (the first time the
+        # list is rendered). Preserves the user's selection where
+        # the country still exists in the data.
+        self._populate_country_dropdown()
+        self._update_dive_status(f, len(rows))
         # Refresh the Stats window too, so its aggregates stay
         # current with the latest dive add/edit/delete. No-op if
         # the stats window has never been opened.
         self._refresh_stats_window()
+
+    def _current_dive_filter(self) -> DiveFilter:
+        """Read the current state of the four filter inputs and
+        return a DiveFilter.
+
+        Empty / sentinel values become empty strings; the
+        underlying repo call sees None and treats it as "no
+        filter on this dimension". The :meth:`DiveFilter.is_empty`
+        check is used by the status bar and the Clear action.
+        """
+        site_name = self._filter_site_name.text()
+        country_data = self._filter_country.currentData()
+        country_code = "" if country_data in (None, "", self._NO_COUNTRY) else str(country_data)
+        date_from = self._date_edit_value(self._filter_date_from)
+        date_to = self._date_edit_value(self._filter_date_to)
+        notes = self._filter_notes.text()
+        return DiveFilter(
+            site_name_substring=site_name,
+            country_code=country_code,
+            date_from=date_from,
+            date_to=date_to,
+            notes_substring=notes,
+        )
+
+    @staticmethod
+    def _date_edit_value(edit: QDateEdit) -> str:
+        """Return the QDateEdit's date as an ISO string, or "" if
+        the widget is at its special "blank" position
+        (``minimumDate()`` with ``setSpecialValueText(" ")``).
+        """
+        if edit.date() == edit.minimumDate():
+            return ""
+        return edit.date().toString("yyyy-MM-dd")
+
+    @staticmethod
+    def _install_esc_clears(line_edit: QLineEdit) -> None:
+        """Install Esc-to-clear on a QLineEdit.
+
+        Issue #2's acceptance criteria: "Esc in the search box
+        clears the filter". `QLineEdit` has no built-in Esc
+        handler (Esc by default dismisses the widget only if
+        it has `setClearButtonEnabled`, but the clear button
+        requires a click, not a key press). A `QShortcut` with
+        ``WidgetShortcut`` context fires only when the widget
+        itself has keyboard focus — exactly the "user is in
+        the search box" condition the issue describes.
+        """
+        shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), line_edit)
+        shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        shortcut.activated.connect(line_edit.clear)
+
+    _NO_COUNTRY = ""  # sentinel "no selection" for the country combo
+
+    def _populate_country_dropdown(self) -> None:
+        """Refill the country dropdown from
+        :func:`distinct_dive_filter_values`.
+
+        The dropdown is populated lazily (on the first refresh
+        that finds a non-empty distinct-values result). The
+        "(All)" option is at index 0 with the empty-string
+        sentinel; the rest are country names paired with their
+        3-letter ISO codes. Preserves the prior selection where
+        the code still exists in the data.
+        """
+        if self._filter_country.count() > 0:
+            return  # already populated
+        values = dives.distinct_dive_filter_values(self._conn)
+        self._filter_country.blockSignals(True)
+        try:
+            self._filter_country.addItem("(All)", self._NO_COUNTRY)
+            for name, code in values.countries:
+                self._filter_country.addItem(name, code)
+        finally:
+            self._filter_country.blockSignals(False)
+
+    def _on_filter_changed(self, *_args) -> None:
+        """Any of the four filter inputs changed: re-apply the
+        composite filter. Cheap (one SQL query against the
+        already-indexed site + dive tables) so it fires
+        synchronously on every keystroke.
+        """
+        f = self._current_dive_filter()
+        rows = load_rows(self._conn, limit=500, filter=f)
+        self._model.set_rows(rows)
+        self._update_dive_status(f, len(rows))
+
+    def _on_clear_filters(self) -> None:
+        """Reset all four filter inputs to their defaults.
+
+        Disables the action immediately so a second click does
+        nothing. The site-name and notes `QLineEdit`s get their
+        ``clear()`` slot called; the date edits go to their
+        minimum position (which the ``_date_edit_value`` helper
+        treats as "no filter on this dimension"); the country
+        dropdown goes back to "(All)" at index 0.
+
+        Signals are blocked during the reset so the four
+        ``_on_filter_changed`` invocations from each ``setX``
+        don't fire individually — the explicit
+        ``_on_filter_changed`` call at the end does it once.
+        """
+        widgets: list = [
+            self._filter_site_name,
+            self._filter_country,
+            self._filter_date_from,
+            self._filter_date_to,
+            self._filter_notes,
+        ]
+        for w in widgets:
+            w.blockSignals(True)
+        try:
+            self._filter_site_name.clear()
+            self._filter_country.setCurrentIndex(0)
+            self._filter_date_from.setDate(self._filter_date_from.minimumDate())
+            self._filter_date_to.setDate(self._filter_date_to.minimumDate())
+            self._filter_notes.clear()
+        finally:
+            for w in widgets:
+                w.blockSignals(False)
+        self._on_filter_changed()
+
+    def _update_dive_status(self, f: DiveFilter, shown: int) -> None:
+        """Update the status bar to reflect the current filter
+        state and the row count.
+
+        Format follows the issue's suggestion: ``N dive(s)
+        matching '<query>'`` for a single-criterion filter,
+        ``N dive(s) from <from> to <to>`` for a date range,
+        or a multi-criterion composite description when more
+        than one filter is active.
+        """
+        if f.is_empty():
+            msg = (
+                f"{shown} dive(s) shown · "
+                f"SQLite {get_sqlite_version()} · schema v{self._schema_version}"
+            )
+        else:
+            parts: list[str] = []
+            if f.site_name_substring:
+                parts.append(f"site contains '{f.site_name_substring}'")
+            if f.country_code:
+                # Show the country name (the combo's current text),
+                # not the code.
+                parts.append(f"country = {self._filter_country.currentText()}")
+            if f.date_from and f.date_to:
+                parts.append(f"from {f.date_from} to {f.date_to}")
+            elif f.date_from:
+                parts.append(f"from {f.date_from}")
+            elif f.date_to:
+                parts.append(f"through {f.date_to}")
+            if f.notes_substring:
+                parts.append(f"notes contains '{f.notes_substring}'")
+            if len(parts) == 1 and (f.site_name_substring or f.notes_substring):
+                msg = f"{shown} dive(s) matching '{parts[0]}'"
+            elif len(parts) == 1 and (f.date_from or f.date_to):
+                msg = f"{shown} dive(s) {parts[0]}"
+            else:
+                msg = f"{shown} dive(s) — " + "; ".join(parts)
+        self.statusBar().showMessage(msg)
+        self._action_clear_filters.setEnabled(not f.is_empty())
 
     def _on_units_changed(self, action: QAction) -> None:
         """Handle the View > Units toggle.

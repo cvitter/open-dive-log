@@ -23,6 +23,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QHeaderView,
     QLabel,
@@ -37,6 +38,29 @@ from PySide6.QtWidgets import (
 
 from open_dive_log.repositories import sites as sites_repo
 from open_dive_log.units import UnitSystem, m_to_ft
+
+
+# A single filter expression: a name substring and 0-or-1 selection
+# on each of the four dimensions. ``None`` or empty string means
+# "no filter on this dimension"; the underlying repo call sees
+# only the non-None criteria. ``is_empty()`` is used by the UI to
+# decide whether the "Clear filters" button is enabled.
+@dataclasses.dataclass(frozen=True, slots=True)
+class SiteFilter:
+    name: str = ""
+    country_code: str | None = None
+    region: str | None = None
+    environment_id: int | None = None
+    entry_id: int | None = None
+
+    def is_empty(self) -> bool:
+        return not (
+            self.name
+            or self.country_code
+            or self.region
+            or self.environment_id is not None
+            or self.entry_id is not None
+        )
 
 
 # (column index, header, tooltip, applies_to_max_depth)
@@ -76,10 +100,12 @@ def _build_headers(system: UnitSystem) -> tuple[tuple[str, str], ...]:
 class SiteTableModel(QAbstractTableModel):
     """Loads sites via `sites_repo.list_all` and exposes them as a table.
 
-    Supports a name-substring filter (`set_filter`) and a unit
-    system (`set_unit_system`). The filter is case-insensitive
-    substring match against the `name` field. The underlying data
-    (`_all_rows`) is preserved; `_rows` is the filtered view.
+    Supports a `SiteFilter` (name substring + country / region /
+    environment / entry), and a unit system (`set_unit_system`).
+    The filter is applied on the in-memory copy of the rows
+    (`_all_rows`); `_rows` is the filtered view. The name
+    substring is a case-insensitive substring match; the four
+    dimension filters are exact matches (None means "no filter").
     `set_rows` resets the filter to "show all".
     """
 
@@ -87,7 +113,7 @@ class SiteTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._all_rows: list[sites_repo.Site] = []
         self._rows: list[sites_repo.Site] = []
-        self._filter: str = ""
+        self._filter: SiteFilter = SiteFilter()
         self._units: UnitSystem = UnitSystem.METRIC
         self._headers: tuple[tuple[str, str], ...] = _build_headers(self._units)
 
@@ -95,33 +121,50 @@ class SiteTableModel(QAbstractTableModel):
         """Replace the underlying data and reset the filter."""
         self.beginResetModel()
         self._all_rows = list(rows)
-        self._filter = ""
+        self._filter = SiteFilter()
         self._rows = list(self._all_rows)
         self.endResetModel()
 
     def set_filter(self, name_substring: str) -> None:
-        """Filter the visible rows to those whose name contains the given
-        substring (case-insensitive). Empty string shows all rows.
+        """Backwards-compatible name-only filter shortcut.
 
-        Triggered on every keystroke in the search box — for 3,123
-        sites this is fast (linear scan, single field match) and
-        avoids a DB round-trip per keystroke.
+        Equivalent to ``set_filters(SiteFilter(name=name_substring))``.
+        Kept so the search box's ``textChanged`` handler doesn't
+        have to know about the new filter shape.
         """
-        needle = name_substring.lower()
-        if needle == self._filter:
+        self.set_filters(SiteFilter(name=name_substring))
+
+    def set_filters(self, f: SiteFilter) -> None:
+        """Apply a full filter. No-op if the filter is unchanged.
+
+        Name filter: case-insensitive substring on ``name``.
+        Dimension filters: exact match on the joined column
+        (``country_code`` for country, free-text for region, FK
+        id for environment / entry). A dimension value of None
+        means "no filter on that dimension".
+        """
+        if f == self._filter:
             return  # no-op
         self.beginResetModel()
-        self._filter = needle
-        if not needle:
-            self._rows = list(self._all_rows)
-        else:
-            self._rows = [
-                s for s in self._all_rows
-                if needle in (s.name or "").lower()
-            ]
+        self._filter = f
+        needle = f.name.lower()
+        rows: list[sites_repo.Site] = []
+        for s in self._all_rows:
+            if needle and needle not in (s.name or "").lower():
+                continue
+            if f.country_code and s.country_code != f.country_code:
+                continue
+            if f.region and s.region != f.region:
+                continue
+            if f.environment_id is not None and s.environment_id != f.environment_id:
+                continue
+            if f.entry_id is not None and s.entry_id != f.entry_id:
+                continue
+            rows.append(s)
+        self._rows = rows
         self.endResetModel()
 
-    def filter(self) -> str:
+    def filter(self) -> SiteFilter:
         return self._filter
 
     def total_count(self) -> int:
@@ -232,6 +275,15 @@ class SitesListWindow(QMainWindow):
 
     DEFAULT_LIMIT = 5000
 
+    # Sentinel "no selection" values for the four filter dropdowns.
+    # None would be ambiguous in PySide6 (currentData() returns None
+    # for unselected items too), so we use string sentinels and
+    # convert to typed values when assembling the SiteFilter.
+    _NO_COUNTRY = ""
+    _NO_REGION = ""
+    _NO_ENV: int = -1
+    _NO_ENTRY: int = -1
+
     def __init__(
         self,
         conn: sqlite3.Connection,
@@ -260,11 +312,51 @@ class SitesListWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
 
-        # --- Toolbar: search + Edit + Delete ----------------------------
+        # --- Toolbar: 4 filter dropdowns + search + Edit + Delete -------
         toolbar = QToolBar("Sites", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
+        # --- Country filter -------------------------------------------
+        toolbar.addWidget(QLabel(" Country: "))
+        self._filter_country = QComboBox()
+        self._filter_country.setMinimumWidth(140)
+        self._filter_country.currentIndexChanged.connect(self._on_filter_changed)
+        toolbar.addWidget(self._filter_country)
+
+        # --- Region filter --------------------------------------------
+        toolbar.addWidget(QLabel("  Region: "))
+        self._filter_region = QComboBox()
+        self._filter_region.setMinimumWidth(140)
+        self._filter_region.currentIndexChanged.connect(self._on_filter_changed)
+        toolbar.addWidget(self._filter_region)
+
+        # --- Environment filter ---------------------------------------
+        toolbar.addWidget(QLabel("  Env: "))
+        self._filter_environment = QComboBox()
+        self._filter_environment.setMinimumWidth(110)
+        self._filter_environment.currentIndexChanged.connect(self._on_filter_changed)
+        toolbar.addWidget(self._filter_environment)
+
+        # --- Entry filter ---------------------------------------------
+        toolbar.addWidget(QLabel("  Entry: "))
+        self._filter_entry = QComboBox()
+        self._filter_entry.setMinimumWidth(90)
+        self._filter_entry.currentIndexChanged.connect(self._on_filter_changed)
+        toolbar.addWidget(self._filter_entry)
+
+        # --- Clear filters button -------------------------------------
+        self._action_clear_filters = QAction("&Clear filters", self)
+        self._action_clear_filters.setStatusTip(
+            "Reset all four dropdowns and the search box to their defaults"
+        )
+        self._action_clear_filters.triggered.connect(self._on_clear_filters)
+        self._action_clear_filters.setEnabled(False)
+        toolbar.addAction(self._action_clear_filters)
+
+        toolbar.addSeparator()
+
+        # --- Search box -----------------------------------------------
         toolbar.addWidget(QLabel(" Search: "))
         self._search = QLineEdit()
         self._search.setPlaceholderText("Filter by site name…")
@@ -312,6 +404,9 @@ class SitesListWindow(QMainWindow):
         sel_model = self._table.selectionModel()
         sel_model.selectionChanged.connect(self._on_selection_changed)
 
+        # The filter values depend on the data, so they are populated
+        # by refresh() rather than in __init__.
+        self._filter_values: sites_repo.SiteFilterValues | None = None
         self.refresh()
 
     # ------------------------------------------------------------------ API
@@ -321,20 +416,203 @@ class SitesListWindow(QMainWindow):
         """
         self._model.set_unit_system(system)
 
+    def _populate_filter_dropdowns(self) -> None:
+        """Read the distinct values from the DB and refill the four
+        dropdowns. Preserves the current selection where possible
+        (so e.g. picking "USA" and then refreshing doesn't reset
+        the dropdown to "All" — it stays on "USA").
+
+        Called from :meth:`refresh` after the data reload.
+        """
+        values = sites_repo.distinct_filter_values(self._conn)
+        self._filter_values = values
+
+        # Capture current selections (by data key) so we can restore
+        # them after the refill.
+        prev_country = self._current_country_code()
+        prev_region = self._current_region()
+        prev_env = self._current_environment_id()
+        prev_entry = self._current_entry_id()
+
+        # Temporarily disconnect signals so refilling the model
+        # doesn't fire a cascade of _on_filter_changed() calls.
+        for combo in (
+            self._filter_country,
+            self._filter_region,
+            self._filter_environment,
+            self._filter_entry,
+        ):
+            combo.blockSignals(True)
+        try:
+            self._refill_combo(
+                self._filter_country, values.countries,
+                all_label="(All)", sentinel=self._NO_COUNTRY,
+            )
+            self._refill_combo(
+                self._filter_region, values.regions,
+                all_label="(All)", sentinel=self._NO_REGION,
+            )
+            self._refill_combo_int(
+                self._filter_environment, values.environments,
+                all_label="(All)", sentinel=self._NO_ENV,
+            )
+            self._refill_combo_int(
+                self._filter_entry, values.entries,
+                all_label="(All)", sentinel=self._NO_ENTRY,
+            )
+            # Restore prior selection where the key still exists in
+            # the new value list; otherwise fall back to "All".
+            self._select_combo_by_data(
+                self._filter_country, prev_country, fallback=self._NO_COUNTRY,
+            )
+            self._select_combo_by_data(
+                self._filter_region, prev_region, fallback=self._NO_REGION,
+            )
+            self._select_combo_by_data(
+                self._filter_environment, prev_env, fallback=self._NO_ENV,
+            )
+            self._select_combo_by_data(
+                self._filter_entry, prev_entry, fallback=self._NO_ENTRY,
+            )
+        finally:
+            for combo in (
+                self._filter_country,
+                self._filter_region,
+                self._filter_environment,
+                self._filter_entry,
+            ):
+                combo.blockSignals(False)
+
+    @staticmethod
+    def _refill_combo(
+        combo: QComboBox,
+        items: list[tuple[str, str]],
+        *,
+        all_label: str,
+        sentinel: str,
+    ) -> None:
+        """Refill a string-keyed dropdown with the "(All)" option
+        at index 0 and the items in display order.
+        """
+        combo.clear()
+        combo.addItem(all_label, sentinel)
+        for label, key in items:
+            combo.addItem(label, key)
+
+    @staticmethod
+    def _refill_combo_int(
+        combo: QComboBox,
+        items: list[tuple[str, int]],
+        *,
+        all_label: str,
+        sentinel: int,
+    ) -> None:
+        """Refill an int-keyed dropdown with the "(All)" option
+        at index 0 and the items in display order.
+        """
+        combo.clear()
+        combo.addItem(all_label, sentinel)
+        for label, key in items:
+            combo.addItem(label, key)
+
+    @staticmethod
+    def _select_combo_by_data(
+        combo: QComboBox, key, *, fallback
+    ) -> None:
+        """Select the dropdown entry whose user-data equals ``key``;
+        fall back to the ``fallback`` key (usually the "(All)"
+        sentinel) if the key is no longer present.
+        """
+        target = key if key is not None else fallback
+        for i in range(combo.count()):
+            if combo.itemData(i) == target:
+                combo.setCurrentIndex(i)
+                return
+        # Key not present: fall back to "(All)" or to whatever the
+        # fallback resolves to.
+        for i in range(combo.count()):
+            if combo.itemData(i) == fallback:
+                combo.setCurrentIndex(i)
+                return
+
+    def _current_country_code(self) -> str | None:
+        data = self._filter_country.currentData()
+        if data in (None, self._NO_COUNTRY, ""):
+            return None
+        return data
+
+    def _current_region(self) -> str | None:
+        data = self._filter_region.currentData()
+        if data in (None, self._NO_REGION, ""):
+            return None
+        return data
+
+    def _current_environment_id(self) -> int | None:
+        data = self._filter_environment.currentData()
+        if data in (None, self._NO_ENV):
+            return None
+        return int(data)
+
+    def _current_entry_id(self) -> int | None:
+        data = self._filter_entry.currentData()
+        if data in (None, self._NO_ENTRY):
+            return None
+        return int(data)
+
+    def _assemble_filter(self) -> SiteFilter:
+        """Build a SiteFilter from the current dropdown + search state."""
+        return SiteFilter(
+            name=self._search.text(),
+            country_code=self._current_country_code(),
+            region=self._current_region(),
+            environment_id=self._current_environment_id(),
+            entry_id=self._current_entry_id(),
+        )
+
     def refresh(self) -> None:
         """Reload the sites from the DB. The current filter is preserved
         (so re-importing from opendivemap doesn't lose the user's
-        typed search)."""
+        typed search or dropdown selections).
+        """
         rows = sites_repo.list_all(self._conn)
         if len(rows) > self.DEFAULT_LIMIT:
             shown = rows[: self.DEFAULT_LIMIT]
         else:
             shown = rows
+        # Repopulate the dropdowns BEFORE setting rows so that the
+        # dropdowns' restored selections reflect the new data set.
+        self._populate_filter_dropdowns()
         self._model.set_rows(shown)
         # Re-apply any active filter
-        if self._search.text():
-            self._model.set_filter(self._search.text())
+        f = self._assemble_filter()
+        if not f.is_empty():
+            self._model.set_filters(f)
         self._update_status()
+
+    def _update_status(self) -> None:
+        total = self._model.total_count()
+        shown = self._model.rowCount()
+        f = self._model.filter()
+        if f.is_empty():
+            msg = f"{shown} of {total} sites"
+        else:
+            parts = []
+            if f.name:
+                parts.append(f"name contains '{f.name}'")
+            if f.country_code:
+                parts.append(f"country = {self._filter_country.currentText()}")
+            if f.region:
+                parts.append(f"region = {f.region}")
+            if f.environment_id is not None:
+                parts.append(f"env = {self._filter_environment.currentText()}")
+            if f.entry_id is not None:
+                parts.append(f"entry = {self._filter_entry.currentText()}")
+            criteria = "; ".join(parts) if parts else "(no criteria)"
+            msg = f"{shown} of {total} sites — {criteria}"
+        self.statusBar().showMessage(msg)
+        # Enable the Clear-filters button only when there's something
+        # to clear.
+        self._action_clear_filters.setEnabled(not f.is_empty())
 
     def selected_site(self) -> sites_repo.Site | None:
         """Return the currently selected Site, or None if no row is
@@ -375,7 +653,50 @@ class SitesListWindow(QMainWindow):
 
     # ------------------------------------------------------------- search
     def _on_search_changed(self, text: str) -> None:
-        self._model.set_filter(text)
+        self._model.set_filters(self._assemble_filter())
+        self._update_status()
+
+    # --------------------------------------------------------- filters
+    def _on_filter_changed(self, *_args) -> None:
+        """Any of the four dropdowns changed: reassemble the
+        composite filter and apply it. Cheap (in-memory scan over
+        the already-loaded rows) so it fires synchronously on
+        every selection change.
+        """
+        self._model.set_filters(self._assemble_filter())
+        self._update_status()
+
+    def _on_clear_filters(self) -> None:
+        """Reset all four dropdowns and the search box to their
+        defaults. Disables the action immediately so a second
+        click does nothing.
+        """
+        # Block signals so the four _on_filter_changed() invocations
+        # from setCurrentIndex don't fire individually — the explicit
+        # set_filters() call at the end will do it once.
+        for combo in (
+            self._filter_country,
+            self._filter_region,
+            self._filter_environment,
+            self._filter_entry,
+        ):
+            combo.blockSignals(True)
+        try:
+            # The "(All)" option is always at index 0 after _refill_combo.
+            self._filter_country.setCurrentIndex(0)
+            self._filter_region.setCurrentIndex(0)
+            self._filter_environment.setCurrentIndex(0)
+            self._filter_entry.setCurrentIndex(0)
+            self._search.clear()
+        finally:
+            for combo in (
+                self._filter_country,
+                self._filter_region,
+                self._filter_environment,
+                self._filter_entry,
+            ):
+                combo.blockSignals(False)
+        self._model.set_filters(SiteFilter())
         self._update_status()
 
     # ----------------------------------------------------------- actions
@@ -528,17 +849,3 @@ class SitesListWindow(QMainWindow):
                 self._table.setCurrentIndex(idx)
                 return
 
-    # ---------------------------------------------------------- status bar
-    def _update_status(self) -> None:
-        shown = self._model.rowCount()
-        total = self._model.total_count()
-        needle = self._search.text().strip()
-        if needle and shown != total:
-            self.statusBar().showMessage(
-                f"Showing {shown} of {total} sites matching “{needle}”"
-            )
-        elif shown != total:
-            # We capped at DEFAULT_LIMIT
-            self.statusBar().showMessage(f"Showing {shown} of {total} sites")
-        else:
-            self.statusBar().showMessage(f"{total} sites")
