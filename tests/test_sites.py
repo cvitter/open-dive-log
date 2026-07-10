@@ -292,7 +292,7 @@ def test_site_table_model_filter() -> None:
         c = cm.__enter__()
         db.apply_migrations(c)
         try:
-            from open_dive_log.ui.sites_list_window import SiteTableModel
+            from open_dive_log.ui.sites_list_window import SiteFilter, SiteTableModel
             from open_dive_log.repositories import sites as sites_repo
 
             # Seed countries for the country_code FK on site
@@ -469,7 +469,7 @@ def test_site_table_model_set_unit_system_is_noop_if_same() -> None:
         c.execute("INSERT OR IGNORE INTO country (code, name) VALUES (?, ?)", ("BQ", "Bonaire"))
         c.commit()
         try:
-            from open_dive_log.ui.sites_list_window import SiteTableModel
+            from open_dive_log.ui.sites_list_window import SiteFilter, SiteTableModel
             from open_dive_log.repositories import sites as sites_repo
             from open_dive_log.units import UnitSystem
 
