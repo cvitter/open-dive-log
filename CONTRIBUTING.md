@@ -63,7 +63,7 @@ git clone https://github.com/cvitter/open-dive-log.git
 cd open-dive-log
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -c "import sqlite3; print(sqlite3.sqlite_version)"  # 3.53.x
+.venv/bin/python -c "import sqlite3; print(sqlite3.sqlite_version)"  # 3.45.x
 ```
 
 The first time the app launches it will run any pending migrations and
