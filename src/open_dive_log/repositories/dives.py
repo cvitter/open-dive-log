@@ -9,9 +9,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 from . import buddies, sites
+
+if TYPE_CHECKING:
+    from .buddies import Buddy
+    from .sites import Site
 
 
 @dataclass(frozen=True, slots=True)

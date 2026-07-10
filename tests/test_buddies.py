@@ -114,7 +114,7 @@ def test_count_referencing_dives_counts_links(
 # stays in one place.
 
 
-def _run_qt_test(source: str) -> "subprocess.CompletedProcess[str]":  # type: ignore[name-defined]
+def _run_qt_test(source: str):  # type: ignore[no-untyped-def]
     """Deprecated: call the conftest's ``run_qt_subprocess`` directly.
     Kept as a thin wrapper so existing tests don't have to change.
     """

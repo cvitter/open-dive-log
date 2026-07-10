@@ -212,8 +212,8 @@ def test_compute_stats_dive_with_no_sites_zero_sites_and_countries(
 
 
 # ----------------------------------------------------------------- window
-def _subprocess_test(source: str, timeout: int = 30) -> "subprocess.CompletedProcess[str]":  # type: ignore[name-defined]
-    """Run a Qt test source in a subprocess.
+def _subprocess_test(source: str, timeout: int = 30):  # type: ignore[no-untyped-def]
+    """Run a Qt test source in a subprocess. The source should print
 
     Thin wrapper around ``tests.conftest.run_qt_subprocess``. The
     bootstrap that sets up the env (``PYTHONPATH=src``) and starts a

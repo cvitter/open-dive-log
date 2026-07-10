@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,

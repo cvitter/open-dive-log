@@ -23,12 +23,10 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from open_dive_log import db
 from open_dive_log import import_opendivemap
-from open_dive_log.repositories import lookups, sites
+from open_dive_log.repositories import sites
 from open_dive_log.sources import opendivemap
 
 

@@ -27,7 +27,7 @@ data to a cloud service.
 - PySide6 6.8+ (Qt 6 GUI; 6.8.3 and 6.10.3 verified; **6.11.x is broken
   on macOS arm64** — its Cocoa plugin can't be loaded by Qt's plugin
   loader)
-- SQLite 3.53.x (Python's bundled `sqlite3` module)
+- SQLite 3.45.x (Python's bundled `sqlite3` module)
 - pytest 8.x (pinned in `pyproject.toml`; 9.x broke a hard import of
   `pygments`)
 
@@ -38,7 +38,7 @@ brew install python@3.13
 cd open-dive-log
 python3.13 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -c "import sqlite3; print(sqlite3.sqlite_version)"   # 3.53.x
+.venv/bin/python -c "import sqlite3; print(sqlite3.sqlite_version)"   # 3.45.x
 ```
 
 The first time the app launches it will run any pending migrations and
@@ -179,8 +179,17 @@ The DDL lives in `src/open_dive_log/migrations/`:
 | `002_opendivemap.sql` | v2 | Country table, opendivemap site topology/environment, external-id plumbing, 3,123 site rows |
 | `003_site_descriptions.sql` | v3 | `site.description` and `site.description_wildlife` (text columns from the upstream tags bag) |
 | `004_certifications.sql` | v4 | Cert-agency lookup, `certification` table enhancements |
-| `005_dive_conditions.sql` | v5 | `dive.air_temp_c`, `dive.water_temp_c`, `dive.visibility_m` with range CHECK constraints |
-| `006_dive_pressure.sql` | v6 | `dive.start_pressure_bar`, `dive.end_pressure_bar` (CHECK 0..350 BAR = 0..5076 PSI) |
+| `005_dive_conditions.sql` | v5 | `dive.air_temp_c`, `dive.water_temp_c`, `dive.visibility_m` with range checks enforced via INSERT/UPDATE triggers (SQLite 3.45+ compatible) |
+| `006_dive_pressure.sql` | v6 | `dive.start_pressure_bar`, `dive.end_pressure_bar` (range 0..350 BAR = 0..5076 PSI, also via triggers) |
+
+Note on the v5/v6 range checks: SQLite 3.53+ supports `ALTER TABLE
+... ADD CONSTRAINT ... CHECK (...)` natively, which is what the
+original migrations used. We deliberately rewrote these to use
+BEFORE INSERT/UPDATE triggers so the project can run on any
+SQLite 3.45+ (the GitHub-hosted Ubuntu runner ships 3.45.1).
+The trigger pattern is functionally equivalent — every insert and
+update is checked, and out-of-range values abort the operation
+with a clear `RAISE(ABORT, '... out of range ...')` message.
 
 Key design choices:
 

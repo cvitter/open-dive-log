@@ -7,7 +7,6 @@ and the subprocess tests elsewhere.
 """
 from __future__ import annotations
 
-import pytest
 
 from open_dive_log.repositories import dives
 from open_dive_log.ui.dive_table_model import (

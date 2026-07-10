@@ -285,7 +285,7 @@ def test_site_table_model_filter() -> None:
     insensitive substring match on the name. Empty filter shows all."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "filter_test.db"))
@@ -347,7 +347,7 @@ def test_site_table_model_set_rows_resets_filter() -> None:
     fresh data on a re-import."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "filter_reset_test.db"))
@@ -385,7 +385,7 @@ def test_site_table_model_metric_max_depth() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import Qt
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "depth_metric.db"))
@@ -408,7 +408,6 @@ def test_site_table_model_metric_max_depth() -> None:
             assert headers[COL_MAX_DEPTH][0] == "Max depth (m)"
 
             # Read the data cell for the max-depth column
-            from PySide6.QtCore import QModelIndex
             idx = model.index(0, COL_MAX_DEPTH)
             assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "18"
         finally:
@@ -424,7 +423,7 @@ def test_site_table_model_imperial_max_depth_converts() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import Qt
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "depth_imperial.db"))
@@ -447,7 +446,6 @@ def test_site_table_model_imperial_max_depth_converts() -> None:
             model.set_unit_system(UnitSystem.IMPERIAL)
             headers = _build_headers(model.unit_system())
             assert headers[COL_MAX_DEPTH][0] == "Max depth (ft)"
-            from PySide6.QtCore import QModelIndex
             idx = model.index(0, COL_MAX_DEPTH)
             # 18 m = 59.0551... ft, formatted as '59.1'
             assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "59.1"
@@ -462,7 +460,7 @@ def test_site_table_model_set_unit_system_is_noop_if_same() -> None:
     unchanged."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     with tempfile.TemporaryDirectory() as d:
         cm = db.connect(os.path.join(d, "noop.db"))
@@ -510,7 +508,7 @@ def test_site_dialog_max_depth_imperial_displays_and_converts() -> None:
         from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
         from open_dive_log.units import UnitSystem
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
 
         cm = connect(':memory:')
@@ -563,7 +561,7 @@ def test_site_dialog_max_depth_metric_passthrough() -> None:
         from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
         from open_dive_log.units import UnitSystem
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
 
         cm = connect(':memory:')
@@ -606,7 +604,7 @@ def test_sites_list_window_edit_from_selection_opens_dialog() -> None:
         from open_dive_log.repositories import sites as sites_repo
         from open_dive_log.ui.sites_list_window import SitesListWindow
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         tmp = tempfile.mkdtemp()
         cm = connect(os.path.join(tmp, 'win.db'))
         c = cm.__enter__()
@@ -656,7 +654,7 @@ def test_sites_list_window_edit_persists_country_code() -> None:
         from open_dive_log.repositories import sites as sites_repo
         from open_dive_log.ui.sites_list_window import SitesListWindow
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         tmp = tempfile.mkdtemp()
         cm = connect(os.path.join(tmp, 'regress.db'))
         c = cm.__enter__()
@@ -723,7 +721,7 @@ def test_sites_list_window_no_selection_disables_actions() -> None:
         from open_dive_log.repositories import sites as sites_repo
         from open_dive_log.ui.sites_list_window import SitesListWindow
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         tmp = tempfile.mkdtemp()
         cm = connect(os.path.join(tmp, 'win2.db'))
         c = cm.__enter__()
@@ -762,7 +760,7 @@ def test_sites_list_window_filter_updates_status_bar() -> None:
         from open_dive_log.repositories import sites as sites_repo
         from open_dive_log.ui.sites_list_window import SitesListWindow
 
-        app = QApplication.instance() or QApplication([])
+        QApplication.instance() or QApplication([])
         tmp = tempfile.mkdtemp()
         cm = connect(os.path.join(tmp, 'win3.db'))
         c = cm.__enter__()
@@ -907,7 +905,7 @@ def test_qt_sites_list_window_new_action_creates_site() -> None:
     from open_dive_log.ui.sites_list_window import SitesListWindow
     from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
 
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
     # Auto-confirm any QMessageBox (the duplicate-name error path
     # would surface one; we don't want it to block).
     QMessageBox.critical = staticmethod(
@@ -990,7 +988,7 @@ def test_qt_sites_list_window_new_action_handles_duplicate() -> None:
     from open_dive_log.ui.sites_list_window import SitesListWindow
     from open_dive_log.ui.site_add_edit_dialog import SiteAddEditDialog
 
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     # Capture any QMessageBox.critical calls
     critical_calls: list[tuple[str, str]] = []
@@ -1063,7 +1061,7 @@ def test_qt_sites_list_window_new_action_is_always_enabled() -> None:
     from open_dive_log.db import connect, apply_migrations
     from open_dive_log.ui.sites_list_window import SitesListWindow
 
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
 
     cm = connect(':memory:')
     c = cm.__enter__()

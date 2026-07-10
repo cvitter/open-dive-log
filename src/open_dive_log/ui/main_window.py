@@ -24,13 +24,10 @@ mutates a dive.
 from __future__ import annotations
 
 import sqlite3
-import threading
-from collections.abc import Callable
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
-    QDialog,
     QHeaderView,
     QMainWindow,
     QMessageBox,
@@ -46,7 +43,6 @@ from open_dive_log.units import UnitSystem
 from open_dive_log.ui.cert_add_edit_dialog import CertAddEditDialog  # noqa: F401
 from open_dive_log.ui.cert_list_window import CertListWindow
 from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
-from open_dive_log.ui.dive_detail_dialog import DiveDetailDialog
 from open_dive_log.ui.dive_table_model import DiveTableModel, load_rows
 from open_dive_log.ui.sites_list_window import SitesListWindow
 from open_dive_log.ui.buddies_list_window import BuddiesListWindow

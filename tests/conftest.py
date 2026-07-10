@@ -38,6 +38,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
+import sys
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
@@ -45,6 +46,14 @@ from pathlib import Path
 import pytest
 
 from open_dive_log import db
+
+
+# "Save As" duplicates (foo 2.py, foo 3.py) that text editors drop
+# next to tracked files. .gitignore handles the untracked case, but
+# pytest 8's gitignore-respecting collector doesn't always skip these
+# (literal-space-in-glob edge case). Exclude them by name here so the
+# collected test count is the real one.
+collect_ignore_glob = ["* 2.py", "* 3.py"]
 
 
 # Marker: opt out of the live-DB safety net for a single test.
@@ -136,8 +145,16 @@ def live_conn() -> Iterator[sqlite3.Connection]:
     patch of the default path is irrelevant. The connection is in
     SQLite's default mode; tests that use this fixture MUST NOT
     write — the test only proves the live data is well-formed.
+
+    Skips if the live DB doesn't exist (CI runners, fresh clones).
+    A test that depends on a real DB can only run where the real
+    DB is. The test that uses this fixture should be marked with
+    ``@pytest.mark.allow_live_db`` so the skip reason is visible
+    in the test report.
     """
     real_path = Path(__file__).resolve().parent.parent / "data" / "open_dive_log.db"
+    if not real_path.exists():
+        pytest.skip(f"Live DB does not exist at {real_path}; allow_live_db tests are no-ops here")
     with db.connect(real_path) as conn:
         yield conn
 
@@ -198,10 +215,13 @@ def run_qt_subprocess(
     """Run ``source`` as a Python script in a subprocess with the
     Qt-friendly bootstrap applied.
 
-    The subprocess uses ``.venv/bin/python`` and the project root as
-    its cwd, matching the historical pattern. The bootstrap (above)
-    sets up the env and starts a QApplication; the ``source`` body
-    runs after that and can call into the window classes directly.
+    The subprocess uses the same Python interpreter as the parent
+    test process (``sys.executable``), so it works whether the
+    parent is a `.venv/bin/python` on a developer's machine or the
+    system Python on a CI runner. The project root is the cwd. The
+    bootstrap (above) sets up the env and starts a QApplication;
+    the ``source`` body runs after that and can call into the
+    window classes directly.
 
     The subprocess is expected to print ``OK: ...`` or ``SKIP: ...``
     on stdout. ``SKIP:`` is treated as a pytest skip by the caller
@@ -227,7 +247,7 @@ def run_qt_subprocess(
     PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     full = QT_SUBPROCESS_BOOTSTRAP + textwrap.dedent(source)
     return subprocess.run(
-        [os.path.join(PROJECT_ROOT, ".venv", "bin", "python"), "-c", full],
+        [sys.executable, "-c", full],
         capture_output=True,
         text=True,
         cwd=PROJECT_ROOT,

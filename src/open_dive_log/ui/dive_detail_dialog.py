@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from open_dive_log.repositories import buddies, dives, sites as sites_repo
+from open_dive_log.repositories import dives
 from open_dive_log.units import UnitSystem, display_distance, display_pressure, display_temp
 
 
