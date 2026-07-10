@@ -123,6 +123,25 @@ def fresh_db(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     # the time we get here. tmp_path cleanup is automatic.
 
 
+@pytest.fixture
+def live_conn() -> Iterator[sqlite3.Connection]:
+    """A connection to the live ``data/open_dive_log.db``.
+
+    Mark the test that uses this with ``@pytest.mark.allow_live_db``;
+    otherwise the autouse :func:`_block_live_db` fixture would have
+    already monkey-patched ``DEFAULT_DB_PATH`` to a tmp file.
+
+    The path is computed from this file's location and opened with
+    an explicit ``db.connect(real_path)`` so the conftest's monkey
+    patch of the default path is irrelevant. The connection is in
+    SQLite's default mode; tests that use this fixture MUST NOT
+    write — the test only proves the live data is well-formed.
+    """
+    real_path = Path(__file__).resolve().parent.parent / "data" / "open_dive_log.db"
+    with db.connect(real_path) as conn:
+        yield conn
+
+
 # -------------------------------------------------------------------
 # Qt subprocess helpers
 # -------------------------------------------------------------------
@@ -196,8 +215,6 @@ def run_qt_subprocess(
     shim resolves to the project's own source tree. Pass ``env`` to
     override; ``None`` means "use the sanitized default".
     """
-    import os
-
     if env is None:
         # Start from the inherited env, then strip and replace
         # PYTHONPATH. Anything else from the parent shell that

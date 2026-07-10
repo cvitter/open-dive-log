@@ -335,3 +335,145 @@ def test_list_recent_with_sites_includes_pressure_and_avg_depth(
     assert rows[0]["avg_depth_m"] == 18.0
     assert rows[0]["start_pressure_bar"] == 200.0
     assert rows[0]["end_pressure_bar"] == 80.0
+
+
+# ---------------------------------------------------------------------------
+# display_dive_number (chronological position)
+# ---------------------------------------------------------------------------
+# The list view shows a chronological Dive # (1 = earliest in time,
+# n = latest), not the row id. This makes "what was dive #50?" mean
+# the same thing divers expect, and means backdating a new dive
+# renumbers everything after it the way a paper logbook would. The
+# tests below exercise the sort key, the NULLS LAST tiebreaker on
+# start_time, the id tiebreaker, and the limit/sort order.
+
+def test_display_dive_number_is_chronological_not_insertion(
+    conn: sqlite3.Connection,
+) -> None:
+    """Insert three dives in a scrambled order, then assert the
+    display numbers reflect the dates, not the insertion sequence."""
+    # Insert in the order: middle, latest, earliest. The display
+    # numbers should still come out 1, 2, 3 in date order.
+    middle = dives.create(conn, dive_date="2024-06-15")
+    latest = dives.create(conn, dive_date="2026-06-15")
+    earliest = dives.create(conn, dive_date="2000-06-15")
+
+    by_id = {r["id"]: r for r in dives.list_recent_with_sites(conn)}
+
+    assert by_id[earliest]["display_dive_number"] == 1
+    assert by_id[middle]["display_dive_number"] == 2
+    assert by_id[latest]["display_dive_number"] == 3
+
+    # Display numbers are 1..n (no gaps, no duplicates).
+    numbers = sorted(r["display_dive_number"] for r in by_id.values())
+    assert numbers == [1, 2, 3]
+
+
+def test_display_dive_number_tiebreaks_on_start_time_then_id(
+    conn: sqlite3.Connection,
+) -> None:
+    """Same date, two dives: the earlier start_time is dive #1.
+    If the start_times are also identical, the lower id is dive #1."""
+    a = dives.create(conn, dive_date="2026-06-15", start_time="14:00")
+    b = dives.create(conn, dive_date="2026-06-15", start_time="09:00")
+    c = dives.create(conn, dive_date="2026-06-15")  # no start_time
+
+    by_id = {r["id"]: r for r in dives.list_recent_with_sites(conn)}
+    # 09:00 < 14:00 < NULL, so b, a, c.
+    assert by_id[b]["display_dive_number"] == 1
+    assert by_id[a]["display_dive_number"] == 2
+    # NULLS LAST puts c at the end.
+    assert by_id[c]["display_dive_number"] == 3
+
+
+def test_display_dive_number_stable_when_backdating(
+    conn: sqlite3.Connection,
+) -> None:
+    """Insert a 2024 dive, then a 2026 dive, then backdate a 2000
+    dive. The 2000 dive becomes #1; the 2024 dive becomes #2; the
+    2026 dive becomes #3. Insertion order was 2024, 2026, 2000."""
+    first = dives.create(conn, dive_date="2024-06-15")
+    second = dives.create(conn, dive_date="2026-06-15")
+    third = dives.create(conn, dive_date="2000-06-15")
+
+    rows = dives.list_recent_with_sites(conn)
+    by_id = {r["id"]: r for r in rows}
+    assert by_id[third]["display_dive_number"] == 1
+    assert by_id[first]["display_dive_number"] == 2
+    assert by_id[second]["display_dive_number"] == 3
+
+    # The list itself is still sorted by id DESC (newest inserted
+    # at the top) — display order is the UI's call, not the SQL's.
+    # Insertion order: first, second, third → ids 1, 2, 3 → DESC: 3, 2, 1.
+    assert [r["id"] for r in rows] == [third, second, first]
+
+
+def test_display_dive_number_handles_full_logbook(
+    conn: sqlite3.Connection,
+) -> None:
+    """200 dives: every display number 1..200 is present, no gaps,
+    no duplicates, and the earliest date maps to #1."""
+    for i in range(200):
+        # Dates are 2000-01-01 through 2000-07-18 — spread across
+        # the year so the window function has actual work to do.
+        day = i // 5 + 1
+        month = (i // 30) % 6 + 1
+        dives.create(
+            conn, dive_date=f"2000-{month:02d}-{day:02d}",
+        )
+
+    rows = dives.list_recent_with_sites(conn)
+    assert len(rows) == 200
+    numbers = sorted(r["display_dive_number"] for r in rows)
+    assert numbers == list(range(1, 201))
+
+    # The earliest dive_date is 2000-01-01 (i=0); the row with
+    # display_dive_number=1 is exactly that dive.
+    earliest_row = next(r for r in rows if r["display_dive_number"] == 1)
+    assert earliest_row["dive_date"] == "2000-01-01"
+
+@pytest.mark.allow_live_db
+def test_display_dive_number_matches_chronological_sort_for_live_db(
+    live_conn: sqlite3.Connection,
+) -> None:
+    """The 42 real dives in data/open_dive_log.db should renumber
+    1..42 in date order, regardless of how they were inserted. The
+    earliest dive in time gets #1; the latest gets #42.
+
+    This is the test that proves the change is safe for the user's
+    real data: it reads the production DB (live_conn is opt-in via
+    the @pytest.mark.allow_live_db marker) and asserts the renumber
+    matches what the SQL computes from a date sort. Nothing here
+    mutates the DB.
+    """
+    # What the user expects: dive #1 = the earliest dive in time.
+    expected_first = live_conn.execute(
+        "SELECT id, dive_date FROM dive "
+        "ORDER BY dive_date ASC, start_time ASC NULLS LAST, id ASC LIMIT 1"
+    ).fetchone()
+    expected_last = live_conn.execute(
+        "SELECT id, dive_date FROM dive "
+        "ORDER BY dive_date DESC, start_time DESC NULLS LAST, id DESC LIMIT 1"
+    ).fetchone()
+
+    rows = dives.list_recent_with_sites(live_conn)
+
+    # display_dive_number=1 is the row whose dive_date is earliest.
+    first = next(r for r in rows if r["display_dive_number"] == 1)
+    assert first["id"] == expected_first["id"]
+    assert first["dive_date"] == expected_first["dive_date"]
+
+    # display_dive_number=n is the row whose dive_date is latest.
+    n = len(rows)
+    last = next(r for r in rows if r["display_dive_number"] == n)
+    assert last["id"] == expected_last["id"]
+    assert last["dive_date"] == expected_last["dive_date"]
+
+    # Every display number 1..n is present exactly once.
+    assert sorted(r["display_dive_number"] for r in rows) == list(range(1, n + 1))
+
+    # And the list is still sorted by id DESC (the UI is free to
+    # re-sort, but the SQL's contract is unchanged).
+    assert [r["id"] for r in rows] == sorted(
+        (r["id"] for r in rows), reverse=True,
+    )
