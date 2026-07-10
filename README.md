@@ -48,7 +48,7 @@ create `data/open_dive_log.db`.
 
 ```bash
 bin/run-app.sh                       # the GUI
-.venv/bin/python -m pytest           # 206 tests
+.venv/bin/python -m pytest           # 218 tests
 ```
 
 `bin/run-app.sh` is a shell wrapper that handles three macOS
@@ -83,7 +83,12 @@ works without `PYTHONPATH` at all.
   or double-click a row in the list to edit)
 - **11-column dive list**: Dive # · Date · Bottom time · Air temp ·
   Water temp · Visibility · P start · P end · Depth avg · Depth max ·
-  Site. Double-click a row to edit; new dives are pre-selected
+  Site. Double-click a row to edit; new dives are pre-selected.
+  **Dive # is chronological** (1 = the earliest dive in time,
+  n = the most recent), not the row id — so backdating a dive
+  renumbers everything after it the way a paper logbook would.
+  The internal id stays stable and is exposed via the table's
+  UserRole for selection / lookup.
 - **Inline site creation**: while logging a dive, you can add a brand
   new site on the fly — it shows up in the Sites window once the
   dive is saved
@@ -221,7 +226,11 @@ open-dive-log/
 │       ├── cert_list_window.py
 │       ├── lookups_list_window.py
 │       └── stats_window.py
-├── tests/                           # 206 tests; pytest < 9
+├── tests/                           # 218 tests; pytest < 9
+│   ├── conftest.py                  # autouse live-DB safety net + Qt subprocess helper
+│   ├── test_conftest_safety.py      # regression tests for the conftest's safety net
+│   ├── test_dive_table_model.py     # the DiveTableModel + DiveRow contract
+│   └── ...                          # one test file per repository / module
 ├── CONTRIBUTING.md                  # dev setup, conventions, PR process
 ├── CODE_OF_CONDUCT.md               # Contributor Covenant 2.1
 └── .github/
@@ -242,9 +251,12 @@ open-dive-log/
 
 Tests that need a real Qt event loop use the `offscreen` platform
 plugin and run in a subprocess so a broken `libqcocoa.dylib` doesn't
-take down the rest of the suite. There are 206 tests; the 2 that
+take down the rest of the suite. There are 218 tests; the 2 that
 skip are pre-existing environmental Qt subprocess issues, not
-regressions.
+regressions. Every test runs against a tmp-path DB (the
+`tests/conftest.py` autouse fixture monkey-patches
+`db.DEFAULT_DB_PATH` so a stray `db.connect()` with no arguments
+opens a tmp file, not the live `data/open_dive_log.db`).
 
 ## Tech notes
 
@@ -385,6 +397,9 @@ are not yet implemented. Listed roughly in priority order.
 - **Test data generator** — a CLI subcommand that seeds a
   development DB with N synthetic dives across the existing
   opendivemap sites, for UI work and screenshot demos.
+  [PR #20](https://github.com/cvitter/open-dive-log/pull/20) is
+  in review; it includes a `--force` guard request from this
+  reviewer before the safety work above is fully covered.
 - **The 6 remaining opendivemap tags** — the importer currently
   pulls `description` and `description_wildlife`. The upstream
   also exposes `average_vis_m`, `average_divetime_min`,
