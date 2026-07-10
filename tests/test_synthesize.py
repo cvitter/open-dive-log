@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import pytest
 from pathlib import Path
 
 from open_dive_log import db
@@ -40,6 +41,7 @@ def test_generate_dives_creates_realistic_rows(tmp_path):
         site_ids=[1, 2],
         date_from="2020-01-01",
         date_to="2024-12-31",
+        skip_confirmation=True
     )
 
     assert inserted == 25
@@ -65,6 +67,7 @@ def test_generate_dives_completes_100_rows_under_five_seconds(tmp_path):
         site_ids=[1, 2],
         date_from="2020-01-01",
         date_to="2024-12-31",
+        skip_confirmation=True
     )
     elapsed = time.perf_counter() - started
 
@@ -84,6 +87,7 @@ def test_generate_dives_keeps_depth_values_within_expected_bounds(tmp_path):
         site_ids=[1, 2],
         date_from="2020-01-01",
         date_to="2024-12-31",
+        skip_confirmation=True
     )
 
     assert inserted == 15
@@ -117,6 +121,7 @@ def test_generate_dives_is_reproducible_with_same_seed(tmp_path):
         site_ids=[1, 2],
         date_from="2020-01-01",
         date_to="2024-12-31",
+        skip_confirmation=True
     )
     generate_dives(
         count=20,
@@ -125,9 +130,51 @@ def test_generate_dives_is_reproducible_with_same_seed(tmp_path):
         site_ids=[1, 2],
         date_from="2020-01-01",
         date_to="2024-12-31",
+        skip_confirmation=True
     )
 
     rows_a = _load_dive_rows(db_path_a)
     rows_b = _load_dive_rows(db_path_b)
 
     assert [tuple(row) for row in rows_a] == [tuple(row) for row in rows_b]
+
+
+def test_generate_dives_refuses_empty_db_path(tmp_path):
+    db_path = tmp_path / "test.db"
+    _seed_test_db(db_path)
+
+    with pytest.raises(ValueError, match="DB path must be provided"):
+        generate_dives(
+            count=5,
+            db_path=None,
+            seed=42,
+            site_ids=[1, 2],
+            date_from="2020-01-01",
+            date_to="2020-12-31",
+            skip_confirmation=True,
+        )
+
+
+def test_generate_dives_refuses_non_empty_db_without_force(tmp_path):
+    db_path = tmp_path / "test.db"
+    _seed_test_db(db_path)
+    generate_dives(
+        count=1,
+        db_path=db_path,
+        seed=1,
+        site_ids=[1, 2],
+        date_from="2020-01-01",
+        date_to="2020-12-31",
+        skip_confirmation=True,
+    )
+
+    with pytest.raises(ValueError, match="Dive table is not empty"):
+        generate_dives(
+            count=1,
+            db_path=db_path,
+            seed=2,
+            site_ids=[1, 2],
+            date_from="2020-01-01",
+            date_to="2020-12-31",
+            skip_confirmation=True,
+        )

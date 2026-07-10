@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import logging
 import random
 import sqlite3
@@ -12,19 +13,6 @@ from open_dive_log import db
 from open_dive_log.repositories import buddies, dives, sites
 
 logger = logging.getLogger(__name__)
-
-
-def _load_sites(conn: sqlite3.Connection, site_ids: list[int] | None = None) -> list[sites.Site]:
-    """Load existing sites from the repository, optionally filtering by ids.
-
-    There is no dedicated repository helper for "list sites by a subset of ids"
-    yet, so the filtering stays local to this generator.
-    """
-    all_sites = sites.list_all(conn)
-    if not site_ids:
-        return all_sites
-    allowed = set(site_ids)
-    return [site for site in all_sites if site.id in allowed]
 
 
 def _generate_buddy_names(rng: random.Random) -> tuple[str, str]:
@@ -49,34 +37,52 @@ def _random_date(rng: random.Random, start_date: date, end_date: date) -> str:
 def generate_dives(
     *,
     count: int,
-    db_path: str | Path | None = None,
+    db_path: str | Path,
     seed: int | None = None,
     site_ids: list[int] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    force: bool = False,
+    skip_confirmation: bool = False,
 ) -> int:
     """Generate synthetic dives using existing sites from the database."""
     if count <= 0:
         raise ValueError("count must be positive")
 
+    if db_path is None:
+        raise ValueError("DB path must be provided")
+    
     start_date = date.fromisoformat(date_from) if date_from else date.today() - timedelta(days=365 * 5)
     end_date = date.fromisoformat(date_to) if date_to else date.today()
     if start_date > end_date:
         raise ValueError("date_from must be before or equal to date_to")
 
-    rng = random.Random(seed)
-    started_at = time.perf_counter()
-    logger.info(
-        "Starting synthesis: count=%d seed=%s date_range=%s..%s",
-        count,
-        seed,
-        start_date.isoformat(),
-        end_date.isoformat(),
-    )
-
     with db.connect(db_path) as conn:
         db.apply_migrations(conn)
-        available_sites = _load_sites(conn, site_ids)
+
+        if not force and not dives.is_empty(conn):
+            raise ValueError("Dive table is not empty; use --force to overwrite existing data")
+
+
+        if not skip_confirmation:
+            response = input(f"Generate {count} synthetic dives to {db_path}? (y/N): ")
+            confirmation_response = ["y", "Y", "yes", "Yes", "YES"]
+            if response.lower() not in confirmation_response:
+                logger.info("Operation cancelled by user.")
+                sys.exit(0)
+
+
+        rng = random.Random(seed)
+        started_at = time.perf_counter()
+        logger.info(
+            "Starting synthesis: count=%d seed=%s date_range=%s..%s",
+            count,
+            seed,
+            start_date.isoformat(),
+            end_date.isoformat(),
+        )
+
+        available_sites = sites.list_by_ids(conn, site_ids)
         if not available_sites:
             raise ValueError("No sites available to synthesize dives")
 
@@ -123,11 +129,13 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="Generate synthetic dives")
     parser.add_argument("count", type=int)
-    parser.add_argument("--db", type=str, default=None, help="Path to the SQLite DB")
+    parser.add_argument("--db", type=str, required=True, help="Path to the SQLite DB")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--site-ids", type=str, default=None, help="Comma-separated site ids")
     parser.add_argument("--from", dest="date_from", type=str, default=None, help="Start date YYYY-MM-DD")
     parser.add_argument("--to", dest="date_to", type=str, default=None, help="End date YYYY-MM-DD")
+    parser.add_argument("--force", action="store_true", help="Force generation even if it would overwrite existing data")
+    parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
     args = parser.parse_args(argv)
 
     site_ids = None
@@ -141,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
         site_ids=site_ids,
         date_from=args.date_from,
         date_to=args.date_to,
+        force=args.force,
+        skip_confirmation=args.yes,
     )
     return 0
 

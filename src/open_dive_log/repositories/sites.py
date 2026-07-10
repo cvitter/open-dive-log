@@ -132,6 +132,30 @@ def list_all(conn: sqlite3.Connection) -> list[Site]:
     return [_row_to_site(r) for r in rows]
 
 
+def list_by_ids(
+    conn: sqlite3.Connection,
+    site_ids: Sequence[int] | None = None,
+) -> list[Site]:
+    """Return sites matching the requested ids, or all sites if none given."""
+    if not site_ids:
+        return list_all(conn)
+
+    placeholders = ",".join("?" for _ in site_ids)
+    rows = conn.execute(
+        f"SELECT {_COLS} FROM site s "
+        "LEFT JOIN country c ON c.code = s.country_code "
+        "LEFT JOIN lookup_site_environment le ON le.id = s.environment_id "
+        "LEFT JOIN lookup_entry_type le2 ON le2.id = s.entry_id "
+        f"WHERE s.id IN ({placeholders}) "
+        "ORDER BY s.name",
+        tuple(site_ids),
+    ).fetchall()
+
+    site_map = {row["id"]: _row_to_site(row) for row in rows}
+    
+    return [site_map[sid] for sid in site_ids if sid in site_map]
+
+
 def distinct_filter_values(conn: sqlite3.Connection) -> SiteFilterValues:
     """Return the distinct values that actually appear in the site
     table for each of the four filterable dimensions.
