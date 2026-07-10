@@ -25,14 +25,12 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
-    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -487,10 +485,12 @@ class DiveAddEditDialog(QDialog):
         rl.addWidget(self._sites_attached, 1)
 
         reorder_row = QHBoxLayout()
-        btn_up = QToolButton(); btn_up.setText("▲")
+        btn_up = QToolButton()
+        btn_up.setText("▲")
         btn_up.setToolTip("Move up")
         btn_up.clicked.connect(lambda: self._move_site(-1))
-        btn_down = QToolButton(); btn_down.setText("▼")
+        btn_down = QToolButton()
+        btn_down.setText("▼")
         btn_down.setToolTip("Move down")
         btn_down.clicked.connect(lambda: self._move_site(1))
         reorder_row.addWidget(btn_up)
@@ -591,7 +591,9 @@ class DiveAddEditDialog(QDialog):
     # ------------------------------------------------------------------
     def _header(self, text: str) -> QLabel:
         lbl = QLabel(text)
-        f = lbl.font(); f.setBold(True); f.setPointSize(f.pointSize() + 1)
+        f = lbl.font()
+        f.setBold(True)
+        f.setPointSize(f.pointSize() + 1)
         lbl.setFont(f)
         return lbl
 

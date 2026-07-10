@@ -86,7 +86,6 @@ def test_update_full_round_trip(conn: sqlite3.Connection) -> None:
     full = dives.get_full(conn, did)
     assert full is not None
     # Mutate one field and write back everything.
-    new_kwargs = full.to_kwargs() if hasattr(full, "to_kwargs") else None
     # DiveFull has no to_kwargs() — build the call manually.
     dives.update(
         conn, did,

@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from open_dive_log import db
-from open_dive_log.repositories import dives, lookups, sites
-from open_dive_log.ui import dive_detail_dialog, dive_table_model, sites_list_window
+from open_dive_log.repositories import dives, sites
+from open_dive_log.ui import dive_detail_dialog, dive_table_model
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +355,6 @@ def test_fmt_renders_none_as_dash() -> None:
 # On a working environment (Linux + system Qt, Windows, etc.) the
 # subprocess returns 0 and the assertions below run normally.
 # -------------------------------------------------------------------
-import subprocess
 
 
 def _run_qt_test(test_source: str) -> subprocess.CompletedProcess:

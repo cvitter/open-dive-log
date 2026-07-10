@@ -384,7 +384,7 @@ class SitesListWindow(QMainWindow):
         site and select it in the table.
         """
         from open_dive_log.ui.site_add_edit_dialog import (
-            SiteAddEditDialog, SubmittedSite,
+            SiteAddEditDialog,
         )
         dlg = SiteAddEditDialog(
             self._conn,
@@ -504,7 +504,7 @@ class SitesListWindow(QMainWindow):
         except sqlite3.IntegrityError:
             blockers = sites_repo.list_blocking_dives(self._conn, site.id)
             lines = "\n".join(f"  • #{d_id} ({d_date})" for d_id, d_date in blockers)
-            extra = "" if len(blockers) <= 10 else f"\n  (… and more)"
+            extra = "" if len(blockers) <= 10 else "\n  (… and more)"
             QMessageBox.warning(
                 self, "Delete blocked",
                 f"Cannot delete site #{site.id} '{site.name}' — it's "
