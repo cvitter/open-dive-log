@@ -575,6 +575,130 @@ _FULL_COLS = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class DiveMapPoint:
+    """A single marker on the dive map.
+
+    One row per dive. The coordinates come from the dive's
+    *first* site (in ``dive_site`` order) that has a
+    non-null ``latitude`` / ``longitude``. Dives with no such
+    site are excluded — the map's value is the spatial view,
+    so a dive that can't be placed isn't useful here.
+
+    `display_dive_number` is the chronological position from
+    the same window function that powers the list view, so
+    the hover tooltip reads "Dive #N" matching the table.
+    """
+
+    id: int
+    display_dive_number: int
+    dive_date: str
+    site_name: str
+    latitude: float
+    longitude: float
+    max_depth_m: float | None
+
+
+def list_for_map(
+    conn: sqlite3.Connection,
+    *,
+    site_name_substring: str | None = None,
+    country_code: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    notes_substring: str | None = None,
+) -> list[DiveMapPoint]:
+    """Return one marker per dive for the map view.
+
+    A dive appears if it has at least one site with
+    non-null ``latitude`` and ``longitude``. The marker is
+    placed at the dive's *first* such site (in
+    ``dive_site.site_order``, then ``dive_site.id ASC`` as a
+    tiebreaker for the first-inserted site).
+
+    All five filter dimensions from :func:`list_recent_with_sites`
+    are supported. ``country_code`` matches against the joined
+    site's country (same semantics).
+
+    The chronological display number is computed over the
+    entire ``dive`` table (the same window function the list
+    view uses) so the hover tooltip reads consistent with
+    the list view.
+    """
+    clauses: list[str] = []
+    params: list[str | int] = []
+    if site_name_substring:
+        clauses.append("(s.name IS NOT NULL AND LOWER(s.name) LIKE ?)")
+        params.append(f"%{site_name_substring.lower()}%")
+    if country_code:
+        clauses.append("s.country_code = ?")
+        params.append(country_code)
+    if date_from:
+        clauses.append("n.dive_date >= ?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("n.dive_date <= ?")
+        params.append(date_to)
+    if notes_substring:
+        clauses.append("(n.notes IS NOT NULL AND LOWER(n.notes) LIKE ?)")
+        params.append(f"%{notes_substring.lower()}%")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
+    # The subquery picks the lowest site_order (or first
+    # inserted as a tiebreaker) for each dive. We only join
+    # to sites that have a non-null lat/lon. The
+    # ``WHERE ds.site_id IN (...)`` filter is the "has at
+    # least one geo site" guard.
+    rows = conn.execute(
+        f"""
+        WITH numbered AS (
+            SELECT
+                d.*,
+                ROW_NUMBER() OVER (
+                    ORDER BY d.dive_date ASC,
+                             d.start_time ASC NULLS LAST,
+                             d.id ASC
+                ) AS display_dive_number
+            FROM dive d
+        ),
+        first_geo AS (
+            SELECT
+                ds.dive_id,
+                ds.site_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ds.dive_id
+                    ORDER BY ds.site_order ASC, ds.site_id ASC
+                ) AS rn
+            FROM dive_site ds
+            JOIN site s ON s.id = ds.site_id
+            WHERE s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+        )
+        SELECT
+            n.id, n.display_dive_number, n.dive_date,
+            s.name AS site_name, s.latitude, s.longitude,
+            n.max_depth_m
+        FROM numbered n
+        JOIN first_geo fg ON fg.dive_id = n.id AND fg.rn = 1
+        JOIN site s ON s.id = fg.site_id
+        {where}
+        ORDER BY n.id DESC
+        """,
+        params,
+    ).fetchall()
+    return [
+        DiveMapPoint(
+            id=r["id"],
+            display_dive_number=r["display_dive_number"],
+            dive_date=r["dive_date"],
+            site_name=r["site_name"],
+            latitude=float(r["latitude"]),
+            longitude=float(r["longitude"]),
+            max_depth_m=r["max_depth_m"],
+        )
+        for r in rows
+    ]
+
+
 def get_full(conn: sqlite3.Connection, dive_id: int) -> DiveFull | None:
     row = conn.execute(
         f"SELECT {_FULL_COLS} FROM dive WHERE id = ?", (dive_id,)
