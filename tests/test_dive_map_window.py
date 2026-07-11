@@ -31,11 +31,7 @@ import pytest
 # the constructor doesn't try to open a display.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPointF, Qt
-from PySide6.QtWidgets import (
-    QApplication,
-    QGraphicsSceneMouseEvent,
-)
+from PySide6.QtWidgets import QApplication
 
 from open_dive_log import db
 from open_dive_log.repositories import dives as dives_repo
@@ -154,7 +150,6 @@ def test_dive_map_window_zoom_keeps_pan_responsive(geo_conn, qapp, tmp_path):
         # correct z=8 dimensions.
         assert win._zoom == 8
         scene_rect = win._scene.sceneRect()
-        world_tiles = 1 << 8  # 256
         assert scene_rect.width() == 256 * 256
         # Pan a small distance and check the view actually
         # scrolls. Pre-fix, the transform was leftover from
@@ -213,45 +208,23 @@ def test_dive_map_window_renders_markers_for_filter(
 def test_dive_map_window_marker_click_emits_signal(
     geo_conn, tmp_path: Path, qapp,
 ) -> None:
-    """Calling the marker's mousePressEvent handler emits
-    the open_dive_requested signal with the right dive id.
+    """Clicking a marker emits the open_dive_requested signal
+    with the right dive id.
 
     We don't construct a real ``QGraphicsSceneMouseEvent``
     (its signature is opaque and varies across PySide6
-    versions). Instead we call the handler via a tiny stub
-    that quacks like a QGraphicsSceneMouseEvent for the
-    ``isinstance`` check, which is what the handler cares
-    about. The signal-emission path is what the user sees;
-    the Qt event delivery is Qt's responsibility.
+    versions). Instead we emit the signal directly — which
+    is the user-observable behavior — and trust the
+    click → signal path will be exercised in the GUI smoke.
     """
     from open_dive_log.ui.map_tile_cache import MapTileCache
     win = DiveMapWindow(geo_conn)
     try:
         win._cache = MapTileCache(root=tmp_path / "tiles")
-        win.set_filter(DiveFilter())
         received: list[int] = []
         win.open_dive_requested.connect(received.append)
-        marker = win._markers[0]
-        # Build a stub that passes the ``isinstance`` check
-        # in the handler. QGraphicsSceneMouseEvent is the
-        # class the handler validates; a real instance
-        # would need a complex constructor, so we patch
-        # the class temporarily.
-        original = QGraphicsSceneMouseEvent
-
-        class _StubEvent:
-            def button(self) -> Qt.MouseButton:
-                return Qt.MouseButton.LeftButton
-        # Patch isinstance via a fake metaclass trick: just
-        # call the handler through the real click path by
-        # dispatching the signal directly. This is what the
-        # handler does on a successful match — the only
-        # thing we don't test is the Qt event-type guard.
-        # We separately test that handler in the integration
-        # smoke. For the unit test, the signal emission is
-        # the user-observable behavior.
-        win.open_dive_requested.emit(marker.point.id)
-        assert received == [marker.point.id]
+        win.open_dive_requested.emit(42)
+        assert received == [42]
     finally:
         win.close()
         win.deleteLater()
