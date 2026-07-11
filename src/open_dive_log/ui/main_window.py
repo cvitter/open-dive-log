@@ -23,6 +23,7 @@ mutates a dive.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
@@ -47,11 +48,14 @@ from open_dive_log.units import UnitSystem
 from open_dive_log.ui.cert_add_edit_dialog import CertAddEditDialog  # noqa: F401
 from open_dive_log.ui.cert_list_window import CertListWindow
 from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
+from open_dive_log.ui.dive_map_window import DiveMapWindow
 from open_dive_log.ui.dive_table_model import DiveFilter, DiveTableModel, load_rows
 from open_dive_log.ui.sites_list_window import SitesListWindow
 from open_dive_log.ui.buddies_list_window import BuddiesListWindow
 from open_dive_log.ui.stats_window import StatsWindow
 from open_dive_log.ui.lookups_list_window import LookupsListWindow
+
+logger = logging.getLogger(__name__)
 
 
 class _ImportWorker(QObject):
@@ -218,6 +222,7 @@ class MainWindow(QMainWindow):
         self._certs_window: CertListWindow | None = None
         self._stats_window: StatsWindow | None = None
         self._lookups_window: LookupsListWindow | None = None
+        self._map_window: DiveMapWindow | None = None
 
         # Initial population.
         self._refresh_dive_list()
@@ -251,6 +256,18 @@ class MainWindow(QMainWindow):
         action_list_dives.setShortcut(QKeySequence("Ctrl+L"))
         action_list_dives.triggered.connect(self._refresh_dive_list)
         dives_menu.addAction(action_list_dives)
+
+        # Dive map: spatial view of all dives with geo data.
+        # Lives on the *Dives* menu (not View) because the
+        # map is filter-coupled to the dive list — it's
+        # "show me my dives geographically" not "show me a
+        # generic map." Reuses the current dive filter so
+        # "show me the US dives" filters both the list and
+        # the map.
+        action_show_map = QAction("Show &Map", self)
+        action_show_map.setShortcut(QKeySequence("Ctrl+M"))
+        action_show_map.triggered.connect(self._open_map_window)
+        dives_menu.addAction(action_show_map)
 
         dives_menu.addSeparator()
         action_quit = QAction("&Quit", self)
@@ -450,6 +467,12 @@ class MainWindow(QMainWindow):
         rows = load_rows(self._conn, limit=500, filter=f)
         self._model.set_rows(rows)
         self._update_dive_status(f, len(rows))
+        # Push the new filter to the dive map if it's open.
+        # ``set_filter`` is a no-op when the filter is
+        # unchanged, so the per-keystroke cost is one
+        # equality check.
+        if self._map_window is not None:
+            self._map_window.set_filter(f)
 
     def _on_clear_filters(self) -> None:
         """Reset all four filter inputs to their defaults.
@@ -700,6 +723,47 @@ class MainWindow(QMainWindow):
         self._stats_window.show()
         self._stats_window.raise_()
         self._stats_window.activateWindow()
+
+    def _open_map_window(self) -> None:
+        """Open the dive map window, creating it on first use.
+
+        The map is filter-aware: the current dive-list
+        filter is pushed into the map at open time and on
+        every filter change. This means "show me the US
+        dives" filters both the list and the map.
+        """
+        if self._map_window is None:
+            self._map_window = DiveMapWindow(self._conn, parent=self)
+            self._map_window.set_filter(self._current_dive_filter())
+            self._map_window.open_dive_requested.connect(
+                self._open_dive_by_id,
+            )
+        else:
+            self._map_window.set_filter(self._current_dive_filter())
+        self._map_window.show()
+        self._map_window.raise_()
+        self._map_window.activateWindow()
+
+    def _open_dive_by_id(self, dive_id: int) -> None:
+        """Open the dive dialog for a specific dive id.
+
+        Connected to the map window's
+        ``open_dive_requested`` signal and the dive list's
+        "Show on Map" / "Edit Dive" context actions. Reuses
+        the same path as the menu's "Edit Dive…" action.
+        """
+        # Mirror the existing "edit dive" path so the
+        # dialog behavior is identical whether the user
+        # triggered it from the list, the menu, or the map.
+        try:
+            full = dives.get_full(self._conn, dive_id)
+            if full is None:
+                return
+            dlg = DiveAddEditDialog(self._conn, dive=full, parent=self)
+            if dlg.exec():
+                self._refresh_dive_list()
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to open dive %s", dive_id)
 
     def _refresh_stats_window(self) -> None:
         """If the stats window is open, re-run the aggregations and
