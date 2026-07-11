@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import (
     QObject,
     QPointF,
+    QRectF,
+    QSize,
     Qt,
     QTimer,
     QUrl,
@@ -62,11 +64,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPushButton,
     QStatusBar,
     QVBoxLayout,
     QWidget,
 )
-
 from open_dive_log.repositories.dives import DiveMapPoint, list_for_map
 from open_dive_log.ui.dive_table_model import DiveFilter
 from open_dive_log.ui.map_tile_cache import (
@@ -130,6 +132,22 @@ class _DiveMarker(QGraphicsEllipseItem):
     The marker is a colored dot with a thin border. The
     color is fixed in v0 (deferring topology color-coding
     to a follow-up).
+
+    Click handling: ``mousePressEvent`` is overridden as a
+    real method. We deliberately do NOT call
+    ``super().mousePressEvent(event)`` — doing so would
+    invoke ``QGraphicsItem``'s default press handling,
+    which sets the mouse-grabber state and can cause Qt
+    to re-fire a press event after a modal child closes
+    (the symptom is a dialog that re-opens immediately
+    when dismissed).
+
+    We don't define a custom ``Signal`` here because
+    ``QGraphicsItem`` is not a ``QObject`` and doesn't
+    support PySide6's Signal machinery. Instead, the
+    parent ``DiveMapWindow`` listens for the
+    ``QGraphicsScene.itemPressed`` signal and dispatches
+    based on the marker identity.
     """
 
     def __init__(self, point: DiveMapPoint, parent: QGraphicsItem | None = None) -> None:
@@ -148,6 +166,14 @@ class _DiveMarker(QGraphicsEllipseItem):
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(self._tooltip_text())
+        # ``acceptedMouseButtons`` defaults to all buttons.
+        # We only care about left-button clicks, so be
+        # explicit.
+        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        # Store the dive id on the item's data slot so the
+        # scene's itemPressed signal can dispatch to the
+        # right dive.
+        self.setData(0, point.id)
 
     @property
     def point(self) -> DiveMapPoint:
@@ -160,6 +186,22 @@ class _DiveMarker(QGraphicsEllipseItem):
             f"Dive #{p.display_dive_number} · {p.dive_date} · "
             f"{p.site_name} · {depth}"
         )
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt API)
+        """Accept the press so the scene's view of the
+        press event routes to the right item.
+
+        The actual dialog dispatch happens in the
+        ``DiveMapWindow.eventFilter`` (scene-level press
+        handler) which finds the topmost item and reads
+        the dive id from the data slot.
+        """
+        from PySide6.QtWidgets import QGraphicsSceneMouseEvent
+        if (
+            isinstance(event, QGraphicsSceneMouseEvent)
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            event.accept()
 
 
 class DiveMapWindow(QMainWindow):
@@ -185,10 +227,34 @@ class DiveMapWindow(QMainWindow):
         self,
         conn: sqlite3.Connection,
         parent: QWidget | None = None,
+        initial_size: QSize | None = None,
     ) -> None:
+        """Open the dive map window.
+
+        Args:
+            conn: An open SQLite connection. The map
+                reads dive data via ``list_for_map``.
+            parent: Optional parent widget. If set, the
+                map window centers on the parent's
+                screen position when first shown.
+            initial_size: Optional ``QSize`` for the
+                window's initial geometry. If ``None``,
+                defaults to 900x600 (the historical
+                default). ``MainWindow`` passes its own
+                current size so the map opens to the
+                same dimensions as the dive list.
+        """
         super().__init__(parent)
         self.setWindowTitle("Dive Map")
-        self.resize(900, 600)
+        # Default to 900x600 if no size was supplied.
+        # This is the same default the window used
+        # before ``initial_size`` existed, so any
+        # external call site (tests, etc.) keeps
+        # working unchanged.
+        if initial_size is not None:
+            self.resize(initial_size)
+        else:
+            self.resize(900, 600)
 
         self._conn = conn
         self._filter = DiveFilter()
@@ -226,25 +292,85 @@ class DiveMapWindow(QMainWindow):
         self._view.contents_scrolled.connect(self._on_scrolled)
         self._view.wheelEvent = self._wheel_event  # type: ignore[method-assign]
 
-        # Status bar: zoom selector + offline indicator.
+        # Status bar: zoom selector + zoom +/- buttons + a
+        # "Fit to markers" button + a "Reset" (home) button
+        # + offline indicator. The buttons and the keyboard
+        # shortcuts together give the user proper map
+        # controls without requiring mouse-drag precision
+        # (which is fiddly on a single-button trackpad or
+        # any non-magic-mouse setup).
         bar = QStatusBar(self)
         self.setStatusBar(bar)
+        self._zoom_out_btn = QPushButton("−")
+        self._zoom_out_btn.setFixedWidth(28)
+        self._zoom_out_btn.setToolTip("Zoom out (−)")
+        self._zoom_out_btn.clicked.connect(lambda: self._zoom_by(-1))
         self._zoom_combo = QComboBox()
         for z in range(MIN_ZOOM, MAX_ZOOM + 1):
             self._zoom_combo.addItem(f"Zoom {z}", z)
         self._zoom_combo.setCurrentIndex(self._zoom - MIN_ZOOM)
         self._zoom_combo.currentIndexChanged.connect(self._on_zoom_changed)
+        self._zoom_in_btn = QPushButton("+")
+        self._zoom_in_btn.setFixedWidth(28)
+        self._zoom_in_btn.setToolTip("Zoom in (+)")
+        self._zoom_in_btn.clicked.connect(lambda: self._zoom_by(+1))
+        self._fit_btn = QPushButton("Fit")
+        self._fit_btn.setToolTip(
+            "Zoom to fit all dive markers (F)",
+        )
+        self._fit_btn.clicked.connect(self._fit_to_markers)
+        self._home_btn = QPushButton("Home")
+        self._home_btn.setToolTip("Reset to the world view (Home)")
+        self._home_btn.clicked.connect(self._reset_view)
         self._cursor_label = QLabel("Hover the map for lat/lon")
         self._offline_label = QLabel("")
         bar_layout = QHBoxLayout()
         bar_layout.addWidget(QLabel("Zoom:"))
+        bar_layout.addWidget(self._zoom_out_btn)
         bar_layout.addWidget(self._zoom_combo)
+        bar_layout.addWidget(self._zoom_in_btn)
+        bar_layout.addWidget(self._fit_btn)
+        bar_layout.addWidget(self._home_btn)
         bar_layout.addStretch(1)
         bar_layout.addWidget(self._cursor_label)
         bar_layout.addWidget(self._offline_label)
         bar_widget = QWidget()
         bar_widget.setLayout(bar_layout)
         bar.addPermanentWidget(bar_widget)
+
+        # Keyboard shortcuts. Bound at the window level so
+        # they work whether the user is focused on the
+        # view, a button, or anywhere else in the window.
+        # + / − zoom, F fits, Home resets, arrow keys
+        # pan by 1/4 of the viewport.
+        from PySide6.QtGui import QKeySequence, QShortcut
+        self._shortcut_zoom_in = QShortcut(QKeySequence("+"), self)
+        self._shortcut_zoom_in.activated.connect(
+            lambda: self._zoom_by(+1),
+        )
+        self._shortcut_zoom_out = QShortcut(QKeySequence("-"), self)
+        self._shortcut_zoom_out.activated.connect(
+            lambda: self._zoom_by(-1),
+        )
+        self._shortcut_fit = QShortcut(QKeySequence("F"), self)
+        self._shortcut_fit.activated.connect(self._fit_to_markers)
+        self._shortcut_home = QShortcut(QKeySequence("Home"), self)
+        self._shortcut_home.activated.connect(self._reset_view)
+        # Arrow keys pan. Holding an arrow key fires the
+        # activated signal rapidly; each press translates
+        # the view by 1/4 of the viewport.
+        self._arrow_shortcuts: list[QShortcut] = []
+        for key, dx, dy in (
+            (Qt.Key.Key_Left,   -1,  0),
+            (Qt.Key.Key_Right,  +1,  0),
+            (Qt.Key.Key_Up,      0, -1),
+            (Qt.Key.Key_Down,    0, +1),
+        ):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.activated.connect(
+                lambda d=dx, d2=dy: self._pan_by(d, d2),
+            )
+            self._arrow_shortcuts.append(sc)
 
         # Center the view on the world at the default zoom.
         layout = QVBoxLayout()
@@ -353,8 +479,6 @@ class DiveMapWindow(QMainWindow):
             lon_to_tile_x(point.longitude, self._zoom) * TILE_SIZE,
             lat_to_tile_y(point.latitude, self._zoom) * TILE_SIZE,
         )
-        marker.setData(0, dive_id)
-        marker.mousePressEvent = lambda ev, m=marker: self._on_marker_clicked(m, ev)  # type: ignore[method-assign]
         self._scene.addItem(marker)
         self._markers.append(marker)
         self._view.centerOn(marker)
@@ -379,10 +503,6 @@ class DiveMapWindow(QMainWindow):
                 lon_to_tile_x(p.longitude, self._zoom) * TILE_SIZE,
                 lat_to_tile_y(p.latitude, self._zoom) * TILE_SIZE,
             )
-            # Connect click via the item's data role so the
-            # view can dispatch without subclassing.
-            m.setData(0, p.id)
-            m.mousePressEvent = lambda ev, marker=m: self._on_marker_clicked(marker, ev)  # type: ignore[method-assign]
             self._scene.addItem(m)
             self._markers.append(m)
         self._update_status()
@@ -414,11 +534,177 @@ class DiveMapWindow(QMainWindow):
         z = self._zoom_combo.currentData()
         if z is None:
             return
-        self._zoom = int(z)
+        new_zoom = int(z)
+        if new_zoom == self._zoom:
+            return
+        old_zoom = self._zoom
+        self._zoom = new_zoom
+        # Resize the scene to the new zoom level. We keep
+        # the view's *position* roughly the same: the world
+        # position at the center of the viewport stays at
+        # the center. This way zoom is "in/out at the
+        # current location" not "teleport to the world
+        # center" — which is what every slippy map does
+        # and what the user expects.
+        viewport_center_scene = self._view.mapToScene(
+            self._view.viewport().rect().center(),
+        )
+        world_tiles = 1 << self._zoom
+        self._scene.setSceneRect(
+            0, 0,
+            TILE_SIZE * world_tiles,
+            TILE_SIZE * world_tiles,
+        )
+        # The marker positions are in tile-space * units
+        # of TILE_SIZE * (1 << zoom)*; the actual pixel
+        # position of a marker at (lat, lon) is:
+        #   lon_to_tile_x(lon, zoom) * TILE_SIZE
+        # which changes when zoom changes. So we have to
+        # re-place every marker.
+        self._clear_tiles()
+        self._render_markers()
+        # Re-center on the same lat/lon (now at a new
+        # tile-coord). Convert the old scene position
+        # back to lat/lon, then forward to the new zoom.
+        lat = tile_y_to_lat(viewport_center_scene.y() / TILE_SIZE, old_zoom)
+        lon = tile_x_to_lon(viewport_center_scene.x() / TILE_SIZE, old_zoom)
+        new_x = lon_to_tile_x(lon, self._zoom) * TILE_SIZE
+        new_y = lat_to_tile_y(lat, self._zoom) * TILE_SIZE
+        self._view.resetTransform()
+        self._view.centerOn(QPointF(new_x, new_y))
+        self._render_timer.start()
+
+    def _zoom_by(self, delta: int) -> None:
+        """Step the zoom by ``delta`` (e.g. +1 or -1).
+
+        Bumps the zoom combo by ``delta`` (clamped) which
+        fires ``_on_zoom_changed`` via the combo's
+        currentIndexChanged signal. The combo and the
+        buttons stay in sync because they share the same
+        model state.
+        """
+        new_zoom = self._zoom + delta
+        new_zoom = max(MIN_ZOOM, min(MAX_ZOOM, new_zoom))
+        if new_zoom == self._zoom:
+            return
+        # Block the combo's signal while we set the index
+        # so the wheel/button path doesn't double-fire
+        # _on_zoom_changed via both the button click and
+        # the programmatic combo change.
+        self._zoom_combo.blockSignals(True)
+        self._zoom_combo.setCurrentIndex(new_zoom - MIN_ZOOM)
+        self._zoom_combo.blockSignals(False)
+        # Now fire the handler explicitly.
+        self._on_zoom_changed(new_zoom - MIN_ZOOM)
+
+    def _pan_by(self, dx: int, dy: int) -> None:
+        """Pan the view by (dx, dy) * 1/4 of the viewport.
+
+        Args are signed fractions: ``-1, 0`` = left one
+        quarter; ``+1, 0`` = right one quarter; etc.
+        Holding an arrow key keeps firing the shortcut,
+        so a long press = a long pan.
+        """
+        viewport = self._view.viewport().rect()
+        step_x = int(viewport.width() / 4) * dx
+        step_y = int(viewport.height() / 4) * dy
+        # QGraphicsView.translate moves the view's scroll
+        # position, which is the right call for panning.
+        # Panning doesn't change the visible-tile set
+        # until the user stops; the scroll-throttler
+        # handles that.
+        self._view.translate(step_x, step_y)
+
+    def _fit_to_markers(self) -> None:
+        """Zoom + pan to show all current dive markers
+        with a small padding margin.
+
+        If there are no markers, this is a no-op. If
+        there's exactly one marker, we center on it
+        at the current zoom.
+        """
+        if not self._markers:
+            return
+        # Bounding rect in scene coords. ``childrenBoundingRect``
+        # includes only the markers, not the tiles.
+        bbox = QRectF()
+        for m in self._markers:
+            bbox = bbox.united(m.sceneBoundingRect())
+        if bbox.isEmpty():
+            return
+        # Add 10% padding on each side.
+        pad_x = bbox.width() * 0.1
+        pad_y = bbox.height() * 0.1
+        padded = bbox.adjusted(-pad_x, -pad_y, pad_x, pad_y)
+        # ``fitInView`` applies a transform — the same
+        # transform that broke pan/zoom in v1. We
+        # deliberately don't use it; instead, we
+        # compute the zoom level + center that would
+        # achieve the same result and apply them
+        # via the existing transform-free path.
+        viewport = self._view.viewport().rect()
+        if viewport.width() == 0 or viewport.height() == 0:
+            return
+        # Pick a target zoom so the bbox fills ~80% of
+        # the viewport. The bbox width is in current-zoom
+        # scene pixels. To make it fill the viewport, we
+        # need:
+        #   bbox_w * 2^(target_zoom - current_zoom) = viewport_w / 0.8
+        # Solving:
+        #   target_zoom = current_zoom + log2(viewport_w / (bbox_w * 1.25))
+        import math
+        scale_x = viewport.width() / max(padded.width(), 1.0) / 1.25
+        scale_y = viewport.height() / max(padded.height(), 1.0) / 1.25
+        # Use the smaller of the two scales (less aggressive
+        # zoom) so both dimensions fit.
+        scale = min(scale_x, scale_y)
+        if scale <= 0:
+            return
+        delta_zoom = math.log2(scale)
+        # Round to nearest integer zoom; clamp to the
+        # MIN/MAX_ZOOM range.
+        target_zoom = max(
+            MIN_ZOOM,
+            min(MAX_ZOOM, int(round(self._zoom + delta_zoom))),
+        )
+        if target_zoom != self._zoom:
+            self._zoom = target_zoom
+            self._zoom_combo.blockSignals(True)
+            self._zoom_combo.setCurrentIndex(target_zoom - MIN_ZOOM)
+            self._zoom_combo.blockSignals(False)
+        # Recompute the scene rect and marker positions
+        # for the new zoom.
+        self._clear_tiles()
+        world_tiles = 1 << self._zoom
+        self._scene.setSceneRect(
+            0, 0,
+            TILE_SIZE * world_tiles,
+            TILE_SIZE * world_tiles,
+        )
+        self._render_markers()
+        # Center on the bbox midpoint.
+        cx = (padded.left() + padded.right()) / 2
+        cy = (padded.top() + padded.bottom()) / 2
+        self._view.resetTransform()
+        self._view.centerOn(QPointF(cx, cy))
+        self._render_timer.start()
+
+    def _reset_view(self) -> None:
+        """Reset to the world at the default zoom.
+
+        Mirrors the initial view: the world at
+        ``DEFAULT_ZOOM`` centered on (world_mid, world_mid).
+        """
+        # Update zoom if needed.
+        if self._zoom != DEFAULT_ZOOM:
+            self._zoom = DEFAULT_ZOOM
+            self._zoom_combo.blockSignals(True)
+            self._zoom_combo.setCurrentIndex(DEFAULT_ZOOM - MIN_ZOOM)
+            self._zoom_combo.blockSignals(False)
         self._clear_tiles()
         self._center_on_world()
         self._render_markers()
-        self._render_visible_tiles()
+        self._render_timer.start()
 
     def _clear_tiles(self) -> None:
         for item in self._tile_items.values():
@@ -524,66 +810,116 @@ class DiveMapWindow(QMainWindow):
     def _wheel_event(self, event: QWheelEvent) -> None:
         """Zoom in/out at the cursor position.
 
-        Standard slippy-map pattern: ``Ctrl+wheel`` or
-        ``wheel alone`` (the latter is what most users
-        expect on a Mac trackpad) changes the zoom level,
-        and we re-anchor the view so the world-position
-        under the cursor stays under the cursor after zoom.
+        The world position under the cursor stays under
+        the cursor after the zoom change. This is the
+        standard slippy-map behavior; it's also what
+        every maps app (Google, Apple, OSM) does.
         """
         delta = event.angleDelta().y()
         if delta == 0:
             return
         old_zoom = self._zoom
         if delta > 0 and self._zoom < MAX_ZOOM:
-            self._zoom += 1
+            new_zoom = self._zoom + 1
         elif delta < 0 and self._zoom > MIN_ZOOM:
-            self._zoom -= 1
-        if self._zoom == old_zoom:
+            new_zoom = self._zoom - 1
+        else:
             return
-        # Capture the world position under the cursor before
-        # the zoom change so we can re-anchor.
+        if new_zoom == old_zoom:
+            return
+        # Capture the world position under the cursor
+        # before the zoom change so we can re-anchor.
         scene_pos = self._view.mapToScene(event.position().toPoint())
+        # Apply the zoom. We use the combo's signal-block
+        # dance so the combo stays in sync without
+        # double-firing _on_zoom_changed.
+        self._zoom = new_zoom
         self._zoom_combo.blockSignals(True)
         self._zoom_combo.setCurrentIndex(self._zoom - MIN_ZOOM)
         self._zoom_combo.blockSignals(False)
+        # Resize scene + re-place markers for the new zoom.
+        world_tiles = 1 << self._zoom
+        self._scene.setSceneRect(
+            0, 0,
+            TILE_SIZE * world_tiles,
+            TILE_SIZE * world_tiles,
+        )
         self._clear_tiles()
-        self._center_on_world()
         self._render_markers()
-        # Re-anchor.
-        new_scene_pos = self._view.mapToScene(event.position().toPoint())
-        delta_scene = new_scene_pos - scene_pos
-        self._view.translate(delta_scene.x(), delta_scene.y())
-        self._render_visible_tiles()
+        # Convert the cursor's pre-zoom scene pos to
+        # (lat, lon), then forward to the new zoom.
+        lat = tile_y_to_lat(scene_pos.y() / TILE_SIZE, old_zoom)
+        lon = tile_x_to_lon(scene_pos.x() / TILE_SIZE, old_zoom)
+        new_x = lon_to_tile_x(lon, self._zoom) * TILE_SIZE
+        new_y = lat_to_tile_y(lat, self._zoom) * TILE_SIZE
+        # Re-anchor: the view's transform is reset, so
+        # centerOn places the new (x, y) at the view's
+        # center. To put it back under the cursor, we
+        # translate by the offset between the view's
+        # center and the cursor's screen position.
+        self._view.resetTransform()
+        self._view.centerOn(QPointF(new_x, new_y))
+        cursor_viewport = event.position().toPoint()
+        center_viewport = self._view.viewport().rect().center()
+        # Now translate so the world position that was
+        # at the cursor's pre-zoom scene_pos is at the
+        # cursor's *current* screen position. The
+        # current screen position of the new scene pos
+        # is at the view's center, so we translate by
+        # (center - cursor).
+        self._view.translate(
+            center_viewport.x() - cursor_viewport.x(),
+            center_viewport.y() - cursor_viewport.y(),
+        )
+        self._render_timer.start()
 
-    def _on_marker_clicked(self, marker: _DiveMarker, event) -> None:
-        """Open a popup with the dive info and an 'Open dive' button.
+    def _on_marker_clicked(self, dive_id: int) -> None:
+        """A marker was clicked.
 
-        Implementation note: we use ``QToolTip`` for the
-        one-line summary (cheap, native) and an inline
-        ``QGraphicsProxyWidget`` for the full popup. The
-        proxy approach lets the user click "Open dive"
-        without leaving the map.
+        Defers via ``QTimer.singleShot(0, ...)`` so the
+        press event is fully consumed before any modal
+        dialog opens — without the deferral, Qt can
+        re-fire the press after the dialog returns,
+        causing a re-open loop.
+
+        Emits the public ``open_dive_requested`` signal;
+        ``MainWindow`` connects this to the existing
+        ``DiveAddEditDialog`` in edit mode.
         """
-        # For v0, just emit the signal; the parent window
-        # (MainWindow) connects this to the existing
-        # DiveAddEditDialog constructor.
-        from PySide6.QtWidgets import QGraphicsSceneMouseEvent
-        if (
-            isinstance(event, QGraphicsSceneMouseEvent)
-            and event.button() == Qt.MouseButton.LeftButton
-        ):
-            self.open_dive_requested.emit(marker.point.id)
-        super(_DiveMarker, marker).mousePressEvent(event)
+        QTimer.singleShot(0, lambda: self.open_dive_requested.emit(dive_id))
 
     def eventFilter(self, watched: QObject, event) -> bool:
         # Update the cursor lat/lon in the status bar.
         from PySide6.QtCore import QEvent
-        if event.type() == QEvent.Type.MouseMove and watched is self._scene:
-            scene_pos = event.scenePos()
-            lon = tile_x_to_lon(scene_pos.x() / TILE_SIZE, self._zoom)
-            lat = tile_y_to_lat(scene_pos.y() / TILE_SIZE, self._zoom)
-            if -180 <= lon <= 180 and -90 <= lat <= 90:
-                self._cursor_label.setText(f"Lat {lat:.3f} · Lon {lon:.3f}")
+        from PySide6.QtWidgets import QGraphicsSceneMouseEvent
+        if watched is self._scene:
+            if event.type() == QEvent.Type.GraphicsSceneMouseMove:
+                scene_pos = event.scenePos()
+                lon = tile_x_to_lon(scene_pos.x() / TILE_SIZE, self._zoom)
+                lat = tile_y_to_lat(scene_pos.y() / TILE_SIZE, self._zoom)
+                if -180 <= lon <= 180 and -90 <= lat <= 90:
+                    self._cursor_label.setText(
+                        f"Lat {lat:.3f} · Lon {lon:.3f}",
+                    )
+            elif (
+                event.type() == QEvent.Type.GraphicsSceneMousePress
+                and isinstance(event, QGraphicsSceneMouseEvent)
+                and event.button() == Qt.MouseButton.LeftButton
+            ):
+                # Find the topmost item at the press pos
+                # and check if it's one of our markers.
+                scene_pos = event.scenePos()
+                item = self._scene.itemAt(scene_pos, self._view.transform())
+                if isinstance(item, _DiveMarker):
+                    # Defer the dialog open so the press
+                    # event is fully consumed before Qt
+                    # starts a modal event loop.
+                    QTimer.singleShot(
+                        0,
+                        lambda i=item: self._on_marker_clicked(
+                            int(i.data(0)),
+                        ),
+                    )
         return super().eventFilter(watched, event)
 
     def resizeEvent(self, event) -> None:

@@ -733,7 +733,17 @@ class MainWindow(QMainWindow):
         dives" filters both the list and the map.
         """
         if self._map_window is None:
-            self._map_window = DiveMapWindow(self._conn, parent=self)
+            # Open the map at the same size as the dive
+            # list window, so the user doesn't have to
+            # resize after every open. We capture the
+            # size at first-open; subsequent ``show()``s
+            # preserve whatever the user has dragged
+            # the map to since.
+            self._map_window = DiveMapWindow(
+                self._conn,
+                parent=self,
+                initial_size=self.size(),
+            )
             self._map_window.set_filter(self._current_dive_filter())
             self._map_window.open_dive_requested.connect(
                 self._open_dive_by_id,
