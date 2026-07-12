@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
-from open_dive_log.repositories import dives
+from open_dive_log.repositories import dives, sites
 from open_dive_log import __version__, import_opendivemap, preferences
 from open_dive_log.db import get_default_db_path, get_sqlite_version
 from open_dive_log.units import UnitSystem
@@ -49,6 +49,7 @@ from open_dive_log.ui.cert_add_edit_dialog import CertAddEditDialog  # noqa: F40
 from open_dive_log.ui.cert_list_window import CertListWindow
 from open_dive_log.ui.dive_add_edit_dialog import DiveAddEditDialog
 from open_dive_log.ui.dive_map_window import DiveMapWindow
+from open_dive_log.ui.site_map_window import SiteMapWindow
 from open_dive_log.ui.dive_table_model import DiveFilter, DiveTableModel, load_rows
 from open_dive_log.ui.sites_list_window import SitesListWindow
 from open_dive_log.ui.buddies_list_window import BuddiesListWindow
@@ -223,6 +224,7 @@ class MainWindow(QMainWindow):
         self._stats_window: StatsWindow | None = None
         self._lookups_window: LookupsListWindow | None = None
         self._map_window: DiveMapWindow | None = None
+        self._site_map_window: SiteMapWindow | None = None
 
         # Initial population.
         self._refresh_dive_list()
@@ -282,6 +284,20 @@ class MainWindow(QMainWindow):
         action_list_sites = QAction("&List Sites…", self)
         action_list_sites.triggered.connect(self._open_sites_window)
         sites_menu.addAction(action_list_sites)
+
+        # Site map: spatial view of all sites with geo data.
+        # Lives on the *Sites* menu (not View) because the
+        # map is filter-coupled to the site list — it's
+        # "show me my sites geographically" not "show me a
+        # generic map." Reuses the current site filter so
+        # "show me the US sites" filters both the list and
+        # the map.
+        action_show_site_map = QAction("Show &Map", self)
+        action_show_site_map.setShortcut(QKeySequence("Ctrl+Shift+M"))
+        action_show_site_map.triggered.connect(
+            self._open_site_map_window,
+        )
+        sites_menu.addAction(action_show_site_map)
 
         sites_menu.addSeparator()
         self._action_import_sites = QAction("&Import from opendivemap…", self)
@@ -774,6 +790,92 @@ class MainWindow(QMainWindow):
                 self._refresh_dive_list()
         except Exception:  # noqa: BLE001
             logger.exception("Failed to open dive %s", dive_id)
+
+    def _open_site_map_window(self) -> None:
+        """Open (or focus) the site map window.
+
+        Lazily creates the ``SiteMapWindow`` on first
+        open. Subsequent opens preserve whatever size
+        and pan/zoom the user last left, just like
+        the dive map.
+        """
+        if self._site_map_window is None:
+            # Open the map at the same size as the
+            # sites list window, or the main window
+            # if the sites list isn't open. Mirrors
+            # the dive map's initial_size pattern
+            # (PR #27).
+            initial_size = self._sites_window.size() \
+                if self._sites_window is not None \
+                else self.size()
+            self._site_map_window = SiteMapWindow(
+                self._conn,
+                parent=self,
+                initial_size=initial_size,
+            )
+            self._site_map_window.set_filter(
+                self._current_site_filter(),
+            )
+            self._site_map_window.open_site_requested.connect(
+                self._open_site_by_id,
+            )
+        self._site_map_window.show()
+        self._site_map_window.raise_()
+        self._site_map_window.activateWindow()
+
+    def _current_site_filter(self) -> sites.SiteFilter:
+        """Return the current site-list filter, or a
+        fresh empty one if the sites list isn't open.
+
+        The site map's filter is sourced from the sites
+        list window (not from the main window itself) —
+        same pattern as the dive map's filter, which
+        reads from the main window's filter widgets.
+        """
+        from open_dive_log.ui.sites_list_window import SiteFilter
+        if self._sites_window is None:
+            return SiteFilter()
+        return self._sites_window.filter()
+
+    def _open_site_by_id(self, site_id: int) -> None:
+        """Open the site dialog for a specific site id.
+
+        Connected to the map window's
+        ``open_site_requested`` signal. Mirrors the dive
+        map's ``_open_dive_by_id`` helper: get the
+        full site row, open the dialog in edit mode,
+        refresh the list on save.
+        """
+        from open_dive_log.units import UnitSystem
+        try:
+            site = sites.get(self._conn, site_id)
+            if site is None:
+                return
+            from open_dive_log.ui.site_add_edit_dialog import (
+                SiteAddEditDialog,
+            )
+            unit_system = (
+                self._sites_window.unit_system()
+                if self._sites_window is not None
+                else UnitSystem.METRIC
+            )
+            dlg = SiteAddEditDialog(
+                self._conn, site=site, parent=self,
+                unit_system=unit_system,
+            )
+            if dlg.exec():
+                # The sites list window, if open, has
+                # its own refresh; the map will re-render
+                # the next time the user pans/zooms or
+                # the list filter changes.
+                if self._sites_window is not None:
+                    self._sites_window.refresh()
+                if self._site_map_window is not None:
+                    self._site_map_window.set_filter(
+                        self._current_site_filter(),
+                    )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to open site %s", site_id)
 
     def _refresh_stats_window(self) -> None:
         """If the stats window is open, re-run the aggregations and

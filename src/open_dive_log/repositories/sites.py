@@ -573,3 +573,110 @@ def list_blocking_dives(
         (site_id,),
     ).fetchall()
     return [(r["id"], r["dive_date"]) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Map view
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class SiteMapPoint:
+    """A single marker on the site map.
+
+    One row per site that has non-null ``latitude`` and
+    ``longitude``. Sites with no geo data are excluded
+    — the map's value is the spatial view, so a site
+    that can't be placed isn't useful here.
+
+    Fields carry everything the map needs to render
+    the marker and the click tooltip:
+
+    * ``name`` for the marker label and tooltip
+    * ``country`` / ``country_code`` for the tooltip
+    * ``region`` for the tooltip (optional; legacy
+      free-text, may be NULL)
+    * ``max_depth_m`` for the tooltip ("to 30m")
+    * ``environment_id`` / ``environment_name`` for
+      marker color (one color per environment — the
+      window maps id→QColor)
+    """
+
+    id: int
+    name: str
+    country: str | None
+    country_code: str | None
+    region: str | None
+    latitude: float
+    longitude: float
+    max_depth_m: float | None
+    environment_id: int | None
+    environment_name: str | None
+
+
+def list_for_map(
+    conn: sqlite3.Connection,
+    *,
+    country_code: str | None = None,
+    region: str | None = None,
+    environment_id: int | None = None,
+    entry_id: int | None = None,
+) -> list[SiteMapPoint]:
+    """Return one marker per site for the map view.
+
+    A site appears if it has non-null ``latitude`` and
+    ``longitude``. All four :class:`open_dive_log.ui.sites_list_window.SiteFilter`
+    dimensions are supported with the same semantics as
+    :func:`list_filtered` (empty string or NULL means
+    "don't filter on this dimension").
+
+    Results are ordered by ``id DESC`` (most-recently
+    added first) so the user's "fresh" sites appear on
+    top — same convention as the dive map.
+    """
+    clauses: list[str] = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
+    params: list[str | int] = []
+    if country_code:
+        clauses.append("s.country_code = ?")
+        params.append(country_code)
+    if region:
+        clauses.append("s.region = ?")
+        params.append(region)
+    if environment_id is not None:
+        clauses.append("s.environment_id = ?")
+        params.append(environment_id)
+    if entry_id is not None:
+        clauses.append("s.entry_id = ?")
+        params.append(entry_id)
+    where = " WHERE " + " AND ".join(clauses)
+    rows = conn.execute(
+        f"""
+        SELECT
+            s.id, s.name,
+            s.country, s.country_code, s.region,
+            s.latitude, s.longitude,
+            s.max_depth_m,
+            s.environment_id,
+            le.name AS environment_name
+        FROM site s
+        LEFT JOIN lookup_site_environment le
+            ON le.id = s.environment_id
+        {where}
+        ORDER BY s.id DESC
+        """,
+        params,
+    ).fetchall()
+    return [
+        SiteMapPoint(
+            id=r["id"],
+            name=r["name"],
+            country=r["country"],
+            country_code=r["country_code"],
+            region=r["region"],
+            latitude=float(r["latitude"]),
+            longitude=float(r["longitude"]),
+            max_depth_m=r["max_depth_m"],
+            environment_id=r["environment_id"],
+            environment_name=r["environment_name"],
+        )
+        for r in rows
+    ]

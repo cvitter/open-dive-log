@@ -39,11 +39,8 @@ from PySide6.QtWidgets import (
 
 from open_dive_log import db
 from open_dive_log.repositories import dives as dives_repo
-from open_dive_log.ui.dive_map_window import (
-    DiveMapWindow,
-    lat_to_tile_y,
-    lon_to_tile_x,
-)
+from open_dive_log.ui.dive_map_window import DiveMapWindow
+from open_dive_log.ui.map_window_base import lat_to_tile_y, lon_to_tile_x
 from open_dive_log.ui.dive_table_model import DiveFilter
 
 
@@ -161,7 +158,7 @@ def test_dive_map_window_constructs_with_markers(geo_conn, qapp):
         assert len(win._markers) == 3
         # The markers are positioned at the right
         # tile-coords for z=4.
-        from open_dive_log.ui.dive_map_window import TILE_SIZE
+        from open_dive_log.ui.map_window_base import TILE_SIZE
         for marker in win._markers:
             expected_x = lon_to_tile_x(marker.point.longitude, 4) * TILE_SIZE
             expected_y = lat_to_tile_y(marker.point.latitude, 4) * TILE_SIZE
@@ -503,7 +500,7 @@ def test_dive_map_window_offline_falls_back_to_no_tiles(
         # tile-coord math (no crash even though no tiles
         # are loaded).
         marker = win._markers[0]
-        from open_dive_log.ui.dive_map_window import TILE_SIZE
+        from open_dive_log.ui.map_window_base import TILE_SIZE
         z = win._zoom
         expected_x = lon_to_tile_x(marker.point.longitude, z) * TILE_SIZE
         expected_y = lat_to_tile_y(marker.point.latitude, z) * TILE_SIZE
