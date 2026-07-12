@@ -26,10 +26,18 @@ jobs:
         python-version: ["3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      # Bump to ``v5``/``v6`` to drop the Node.js 20
+      # deprecation warning. v4 of ``actions/checkout`` and
+      # v5 of ``actions/setup-python`` both target Node 20
+      # by default, which GitHub deprecated in Sept 2025
+      # (https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/).
+      # The major-version bumps are non-breaking for our
+      # use (checkout: shallow clone + LFS disabled;
+      # setup-python: install + pip cache).
+      - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
