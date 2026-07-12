@@ -4,6 +4,16 @@ An open-source desktop application for logging scuba dives. Built for
 divers who want to keep a local, portable logbook without giving their
 data to a cloud service.
 
+I have started building a dive log application several times since I got
+my open water certification back in 2001. This is the first time I have
+progressed to the stage where I have something that is usable, if not
+beautiful. Of course this time I didn't actually hand code the 
+application. Most of my contribution was created using Hermes
+desktop and Minimax M3.
+
+If you find this application useful I'd love feedback, suggestions, 
+and contributions.
+
 ![Python](https://img.shields.io/badge/python-3.13-blue)
 ![License](https://img.shields.io/badge/license-Apache_2.0-green)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
@@ -14,6 +24,12 @@ data to a cloud service.
 - **Open data** — bundled with 3,123 dive sites from
   [opendivemap.com](https://opendivemap.com), no API key required
 - **Multi-site dives** — log a single dive that touched several sites
+- **Spatial views** — both dives and sites plot on a slippy-map
+  (OpenStreetMap tiles, cached on disk). Dives use one marker per
+  dive (centered on the first site with lat/lon); sites use one
+  marker per site, color-coded by environment. The site map is
+  filter-coupled to the sites list — "show me the US sites"
+  filters both views.
 - **Full CRUD everywhere** — dives, sites, buddies, certifications, and
   lookup tables can all be added, edited, and deleted from the UI
 - **Metric or imperial** — a global toggle (View → Units) honors your
@@ -48,7 +64,7 @@ create `data/open_dive_log.db`.
 
 ```bash
 bin/run-app.sh                       # the GUI
-.venv/bin/python -m pytest           # 218 tests
+.venv/bin/python -m pytest           # 272 tests
 ```
 
 `bin/run-app.sh` is a shell wrapper that handles three macOS
@@ -235,7 +251,7 @@ open-dive-log/
 │       ├── cert_list_window.py
 │       ├── lookups_list_window.py
 │       └── stats_window.py
-├── tests/                           # 218 tests; pytest < 9
+├── tests/                           # 272 tests; pytest < 9
 │   ├── conftest.py                  # autouse live-DB safety net + Qt subprocess helper
 │   ├── test_conftest_safety.py      # regression tests for the conftest's safety net
 │   ├── test_dive_table_model.py     # the DiveTableModel + DiveRow contract
@@ -260,7 +276,7 @@ open-dive-log/
 
 Tests that need a real Qt event loop use the `offscreen` platform
 plugin and run in a subprocess so a broken `libqcocoa.dylib` doesn't
-take down the rest of the suite. There are 218 tests; the 2 that
+take down the rest of the suite. There are 272 tests; the 2 that
 skip are pre-existing environmental Qt subprocess issues, not
 regressions. Every test runs against a tmp-path DB (the
 `tests/conftest.py` autouse fixture monkey-patches
@@ -336,14 +352,11 @@ are not yet implemented. Listed roughly in priority order.
 - **Photo attachments per dive** — store images of marine life,
   dive sites, or buddies in a `dive_media` table with FK to dive.
   Display thumbnails in the detail dialog.
-- **Gps track import** — read a GPX file from a dive computer and
-  plot the dive profile on a depth-vs-time chart.
-- **Site map view** — show all sites on a map (e.g. via a Qt WebEngine
-  widget with Leaflet, or pyqtgraph). The site table already has
-  latitude / longitude columns.
 - **Dive profile chart** — render max_depth and bottom_time as a
   sparkline / depth-vs-time chart in the detail dialog. The data is
   in the table; only the visualization is missing.
+- **GPX track import** — read a GPX file from a dive computer and
+  plot the dive profile on a depth-vs-time chart.
 
 ### Higher effort, longer-term
 
