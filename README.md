@@ -337,26 +337,71 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 The current feature set covers the core logbook workflow. The
 following are features that would meaningfully improve the app and
-are not yet implemented. Listed roughly in priority order.
+are not yet implemented. Listed roughly in priority order, and
+linked to the corresponding GitHub issue for status and discussion.
+
+### Recently shipped
+
+- **Dive search and filtering** — the dive list now has a search
+  box and a country/site-name/date-range filter toolbar (the
+  sites list has had this for a while). Closes
+  [#1](https://github.com/cvitter/open-dive-log/issues/1) and
+  [#2](https://github.com/cvitter/open-dive-log/issues/2).
+  ([PR #24](https://github.com/cvitter/open-dive-log/pull/24))
+- **Sites list filters** — the sites list now has filters for
+  country, region, environment, and entry type. Closes
+  [#22](https://github.com/cvitter/open-dive-log/issues/22).
+  ([PR #23](https://github.com/cvitter/open-dive-log/pull/23))
+- **Synthetic data generator** — `python -m open_dive_log.synthesize
+  N` seeds a development DB with N synthetic dives across the
+  opendivemap sites, with a `--force` guard. Closes
+  [#17](https://github.com/cvitter/open-dive-log/issues/17).
+  ([PR #20](https://github.com/cvitter/open-dive-log/pull/20))
+- **Dive map view** — one marker per dive on a slippy-map,
+  click-to-open the dive dialog, offline fallback, OSM tile
+  cache. Closes
+  [#25](https://github.com/cvitter/open-dive-log/issues/25).
+  ([PRs #26, #27](https://github.com/cvitter/open-dive-log/pulls?q=is%3Apr+dive+map))
+- **Site map view** — one marker per site, color-coded by
+  environment (8-color palette, color-blind safe), filter-coupled
+  to the sites list. Closes
+  [#7](https://github.com/cvitter/open-dive-log/issues/7).
+  ([PR #29](https://github.com/cvitter/open-dive-log/pull/29))
 
 ### High value, modest effort
 
-- **Dive search and filtering** — a search box on the dive list
-  (filter by site, buddy, date range, or free-text on notes) so a
-  diver with hundreds of dives can find one quickly. The sites list
-  already has this; the dive list does not.
 - **CSV / JSON export** — let the user export all their dives (or a
   filtered subset) to a portable file format. Import from the same
   formats would also be valuable. Would make backups trivial and
   enable migration to other logbook tools.
+  ([#3](https://github.com/cvitter/open-dive-log/issues/3))
 - **Photo attachments per dive** — store images of marine life,
   dive sites, or buddies in a `dive_media` table with FK to dive.
   Display thumbnails in the detail dialog.
+  ([#4](https://github.com/cvitter/open-dive-log/issues/4))
 - **Dive profile chart** — render max_depth and bottom_time as a
   sparkline / depth-vs-time chart in the detail dialog. The data is
   in the table; only the visualization is missing.
-- **GPX track import** — read a GPX file from a dive computer and
-  plot the dive profile on a depth-vs-time chart.
+  ([#5](https://github.com/cvitter/open-dive-log/issues/5))
+- **GPX track import with profile chart** — read a GPX file from a
+  dive computer and plot the dive profile on a depth-vs-time chart.
+  ([#6](https://github.com/cvitter/open-dive-log/issues/6))
+- **Markdown notes for dives** — render the notes field as Markdown
+  in the detail dialog (currently shown as plain text) so divers can
+  structure their dive reports.
+  ([#8](https://github.com/cvitter/open-dive-log/issues/8))
+- **Backup reminder status-bar indicator** — a status-bar hint that
+  surfaces if the last backup (or DB modification) is older than N
+  days. Backs the "local-first" pitch with a real safety net.
+  ([#18](https://github.com/cvitter/open-dive-log/issues/18))
+- **Configurable unit precision** — let the user pick how many
+  decimal places to show for depth, temp, and pressure. Currently
+  the formatters use 0–2 decimals based on the value.
+  ([#13](https://github.com/cvitter/open-dive-log/issues/13))
+- **Auto-fill country from geolocation** — a site can currently be
+  saved with no country by user choice. A "fill in country from
+  lat/lon" prompt would help keep the site list filterable.
+  ([#15](https://github.com/cvitter/open-dive-log/issues/15))
 
 ### Higher effort, longer-term
 
@@ -364,66 +409,35 @@ are not yet implemented. Listed roughly in priority order.
   computer manufacturers' desktop software (Shearwater, Suunto,
   Garmin, Oceanic). The export formats are typically CSV, XML, or
   proprietary binary, so each vendor is a separate importer.
+  ([#9](https://github.com/cvitter/open-dive-log/issues/9))
 - **Multi-user / cloud sync** — let a diver back up their logbook
   to S3 (or similar) and sync between machines. The schema is
   already portable (single SQLite file); a sync layer is what's
   missing.
+  ([#10](https://github.com/cvitter/open-dive-log/issues/10))
 - **Print a full dive log** — render the entire dive list to a
   printer-friendly PDF, with optional cover page and a per-site
   summary. The certification print pipeline is the existing
   template to follow.
+  ([#11](https://github.com/cvitter/open-dive-log/issues/11))
 - **Statistics: trends over time** — annual dive count, depth
   progression, deepest dive per year, etc. The data is there
   (timestamps + depths); only the aggregations and chart
   rendering are missing.
-- **Markdown notes for dives** — render the notes field as
-  Markdown in the detail dialog (currently shown as plain text)
-  so divers can structure their dive reports.
-- **Configurable unit precision** — let the user pick how many
-  decimal places to show for depth, temp, and pressure. Currently
-  the formatters use 0–2 decimals based on the value.
+  ([#12](https://github.com/cvitter/open-dive-log/issues/12))
 - **Bulk import from other logbook apps** — Subsurface, Divelog,
   Diving Log, MacDive. The schemas are documented; importers
   would be one module each.
-- **Dive sites without a country** — the inline-create flow lets
-  a site be saved with no country, by user choice. A future
-  improvement would be a "fill in country from geolocation" prompt
-  for sites that have lat/lon but no country.
-- **Buddy roles configuration** — the `lookup_buddy_role` table
-  is fully editable, but there's no UI hint that adding a new role
-  in the Lookups window will immediately make it available in the
-  dive form's role dropdown. A one-line help text in the Lookups
-  window would help.
+  ([#14](https://github.com/cvitter/open-dive-log/issues/14))
 - **Site topology editor** — the `site_site_topology` join is
   populated by the opendivemap import, but there's no UI to add
   or remove topologies for a site manually. Editing this would
   let divers tag their own sites with "wreck", "cave", "wall",
   etc.
-- **Dark mode** — Qt 6 supports it natively via the Fusion style;
-  the app currently uses the system default, which on macOS
-  follows the system appearance. A manual "Force Dark" menu
-  toggle would be useful for divers using the app at depth (or
-  just at night).
-- **Internationalization** — the UI is English-only. Qt's
-  translation framework (`tr()`, `.ts` files) would make the app
-  accessible to non-English-speaking divers.
-- **Keyboard shortcuts on the dive list** — `j`/`k` for down/up
-  row, `/` to focus the (future) search box, `n` for new dive.
-  The toolbar has Ctrl+N/E but list navigation is mouse-only.
-- **Backup reminder** — a status-bar hint that surfaces if the
-  last backup (or DB modification) is older than N days. Backs
-  the "local-first" pitch with a real safety net.
-- **Dive count badge on the Sites menu** — show "List Sites…
-  (3,134)" in the menu so the user can see at a glance how many
-  sites are in the DB without opening the window.
-- **Test data generator** — a CLI subcommand that seeds a
-  development DB with N synthetic dives across the existing
-  opendivemap sites, for UI work and screenshot demos.
-  [PR #20](https://github.com/cvitter/open-dive-log/pull/20) is
-  in review; it includes a `--force` guard request from this
-  reviewer before the safety work above is fully covered.
+  ([#16](https://github.com/cvitter/open-dive-log/issues/16))
 - **The 6 remaining opendivemap tags** — the importer currently
   pulls `description` and `description_wildlife`. The upstream
   also exposes `average_vis_m`, `average_divetime_min`,
   `average_rating`, `logged_dives`, `source`, and `thumbnail` —
   all of which would be useful site metadata to import.
+  ([#19](https://github.com/cvitter/open-dive-log/issues/19))
